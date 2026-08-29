@@ -137,11 +137,31 @@ assert_contains() {
 status_output=$("$PROJECT_DIR/m-ui" status)
 assert_contains "$status_output" 'm-ui 状态：未运行'
 assert_contains "$status_output" '是否开机自启：否'
+assert_contains "$status_output" '电视 IP 地址：192.168.1.100'
 assert_contains "$status_output" '电视自启动应用：未设置'
 assert_contains "$status_output" '电视自启动应用延迟：8 秒'
 
-apps_output=$("$PROJECT_DIR/m-ui" menu <<'EOF'
+invalid_ip_output=$("$PROJECT_DIR/m-ui" menu 2>&1 <<'EOF'
 1
+192.168.1.256
+
+0
+EOF
+)
+assert_contains "$invalid_ip_output" '输入无效，请输入正确的 IPv4 地址。'
+assert_contains "$(cat "$MUI_CONFIG_FILE")" 'TV_IP=192.168.1.100'
+
+"$PROJECT_DIR/m-ui" menu >/dev/null <<'EOF'
+1
+192.168.1.123
+
+0
+EOF
+assert_contains "$(cat "$MUI_CONFIG_FILE")" 'TV_IP=192.168.1.123'
+assert_contains "$("$PROJECT_DIR/m-ui" status)" '电视 IP 地址：192.168.1.123'
+
+apps_output=$("$PROJECT_DIR/m-ui" menu <<'EOF'
+2
 
 0
 EOF
@@ -150,7 +170,7 @@ assert_contains "$apps_output" '云视听小电视'
 assert_contains "$apps_output" 'com.xiaodianshi.tv.yst'
 
 "$PROJECT_DIR/m-ui" menu >/dev/null <<'EOF'
-2
+3
 1
 
 0
@@ -160,7 +180,7 @@ status_output=$("$PROJECT_DIR/m-ui" status)
 assert_contains "$status_output" 'com.xiaodianshi.tv.yst'
 
 "$PROJECT_DIR/m-ui" menu >/dev/null <<'EOF'
-3
+4
 3
 
 0
@@ -186,7 +206,13 @@ assert_contains "$status_output" 'm-ui 状态：已运行'
 
 "$PROJECT_DIR/m-ui" daemon &
 daemon_pid=$!
-sleep 6
+sleep 4
+awk '
+    /^TV_IP=/ { print "TV_IP=192.168.1.124"; next }
+    { print }
+' "$MUI_CONFIG_FILE" > "$MUI_CONFIG_FILE.tmp"
+mv "$MUI_CONFIG_FILE.tmp" "$MUI_CONFIG_FILE"
+sleep 3
 kill "$daemon_pid" 2>/dev/null || true
 wait "$daemon_pid" 2>/dev/null || true
 
@@ -203,5 +229,6 @@ launch_count=$(wc -l < "$MUI_TEST_LAUNCHES")
 
 assert_contains "$(cat "$MUI_LOG_FILE")" '检测到电视由息屏进入亮屏'
 assert_contains "$(cat "$MUI_LOG_FILE")" '已启动电视应用'
+assert_contains "$(cat "$MUI_LOG_FILE")" '电视 ADB 地址已更新：192.168.1.123:5555 -> 192.168.1.124:5555'
 
 printf 'm-ui 本机模拟测试全部通过。\n'

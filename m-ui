@@ -2,7 +2,7 @@
 
 # m-ui - Xiaomi TV auto-launch manager for OpenWrt/PandoraBox.
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 
 MUI_CONFIG_DIR="${MUI_CONFIG_DIR:-/etc/m-ui}"
 MUI_CONFIG_FILE="${MUI_CONFIG_FILE:-$MUI_CONFIG_DIR/config}"
@@ -109,6 +109,27 @@ valid_package_name() {
     esac
 }
 
+valid_ipv4() {
+    local ip old_ifs octet
+    ip="$1"
+
+    case "$ip" in
+        ''|*[!0-9.]*|.*|*.|*..*) return 1 ;;
+    esac
+
+    old_ifs="$IFS"
+    IFS='.'
+    set -- $ip
+    IFS="$old_ifs"
+
+    [ "$#" -eq 4 ] || return 1
+    for octet in "$@"; do
+        [ -n "$octet" ] || return 1
+        [ "$octet" -ge 0 ] 2>/dev/null || return 1
+        [ "$octet" -le 255 ] 2>/dev/null || return 1
+    done
+}
+
 valid_positive_number() {
     case "$1" in
         ''|*[!0-9]*) return 1 ;;
@@ -204,8 +225,12 @@ launch_delay_text() {
 }
 
 print_status() {
+    local tv_ip
+    tv_ip=$(config_get TV_IP)
+    valid_ipv4 "$tv_ip" || tv_ip="$DEFAULT_TV_IP"
     printf 'm-ui 状态：%s\n' "$(status_text)"
     printf '是否开机自启：%s\n' "$(enabled_text)"
+    printf '电视 IP 地址：%s\n' "$tv_ip"
     printf '电视自启动应用：%s\n' "$(selected_app_text)"
     printf '电视自启动应用延迟：%s\n' "$(launch_delay_text)"
 }
@@ -254,6 +279,24 @@ show_installed_apps() {
     printf '\n电视已安装应用：\n\n'
     print_apps
     cleanup_app_files
+}
+
+set_tv_ip() {
+    local current_ip new_ip
+    current_ip=$(config_get TV_IP)
+    valid_ipv4 "$current_ip" || current_ip="$DEFAULT_TV_IP"
+
+    printf '当前电视 IP 地址：%s\n' "$current_ip"
+    printf '请输入新的电视 IP 地址：'
+    IFS= read -r new_ip
+
+    if ! valid_ipv4 "$new_ip"; then
+        printf '输入无效，请输入正确的 IPv4 地址。\n' >&2
+        return 1
+    fi
+
+    config_set TV_IP "$new_ip" || return 1
+    printf '电视 IP 地址已设置为 %s，后台服务会在下一轮检测时生效。\n' "$new_ip"
 }
 
 set_autostart_app() {
@@ -439,7 +482,7 @@ daemon_cleanup() {
 }
 
 run_daemon() {
-    local address previous_state current_state confirm_state poll_interval launch_delay connection_logged
+    local address previous_address previous_state current_state confirm_state poll_interval launch_delay connection_logged
 
     ensure_config || exit 1
     require_command "$MUI_ADB_BIN" || {
@@ -459,12 +502,19 @@ run_daemon() {
     trap 'daemon_cleanup' EXIT
 
     export HOME="${HOME:-/root}"
+    previous_address=""
     previous_state=""
     connection_logged=""
     log_message "m-ui ${VERSION} 监控服务已启动。"
 
     while :; do
         address=$(adb_address)
+        if [ -n "$previous_address" ] && [ "$address" != "$previous_address" ]; then
+            log_message "电视 ADB 地址已更新：${previous_address} -> ${address}"
+            previous_state=""
+            connection_logged=""
+        fi
+        previous_address="$address"
         poll_interval=$(config_get POLL_INTERVAL)
         launch_delay=$(config_get LAUNCH_DELAY)
         valid_positive_number "$poll_interval" || poll_interval="$DEFAULT_POLL_INTERVAL"
@@ -517,18 +567,19 @@ print_menu() {
     printf '           m-ui 管理脚本 %s\n' "$VERSION"
     printf '========================================\n\n'
     printf '0. 退出设置\n'
-    printf '1. 查看电视已安装应用\n'
-    printf '2. 设置电视自启动应用\n'
-    printf '3. 设置电视自启动应用延迟\n'
-    printf '4. 启动 m-ui\n'
-    printf '5. 停止 m-ui\n'
-    printf '6. 重启 m-ui\n'
-    printf '7. 查看 m-ui 状态\n'
-    printf '8. 查看 m-ui 日志\n'
-    printf '9. 设置 m-ui 开机自启\n'
-    printf '10. 取消 m-ui 开机自启\n\n'
+    printf '1. 设置电视 IP 地址\n'
+    printf '2. 查看电视已安装应用\n'
+    printf '3. 设置电视自启动应用\n'
+    printf '4. 设置电视自启动应用延迟\n'
+    printf '5. 启动 m-ui\n'
+    printf '6. 停止 m-ui\n'
+    printf '7. 重启 m-ui\n'
+    printf '8. 查看 m-ui 状态\n'
+    printf '9. 查看 m-ui 日志\n'
+    printf '10. 设置 m-ui 开机自启\n'
+    printf '11. 取消 m-ui 开机自启\n\n'
     print_status
-    printf '\n请输入选项 [0-10]：'
+    printf '\n请输入选项 [0-11]：'
 }
 
 interactive_menu() {
@@ -543,17 +594,18 @@ interactive_menu() {
         printf '\n'
         case "$choice" in
             0) printf '已退出 m-ui 设置。\n'; return 0 ;;
-            1) show_installed_apps; pause_screen ;;
-            2) set_autostart_app; pause_screen ;;
-            3) set_launch_delay; pause_screen ;;
-            4) start_service; pause_screen ;;
-            5) stop_service; pause_screen ;;
-            6) restart_service; pause_screen ;;
-            7) print_status; pause_screen ;;
-            8) show_logs; pause_screen ;;
-            9) enable_service; pause_screen ;;
-            10) disable_service; pause_screen ;;
-            *) printf '请输入 0 到 10 之间的序号。\n'; sleep 1 ;;
+            1) set_tv_ip; pause_screen ;;
+            2) show_installed_apps; pause_screen ;;
+            3) set_autostart_app; pause_screen ;;
+            4) set_launch_delay; pause_screen ;;
+            5) start_service; pause_screen ;;
+            6) stop_service; pause_screen ;;
+            7) restart_service; pause_screen ;;
+            8) print_status; pause_screen ;;
+            9) show_logs; pause_screen ;;
+            10) enable_service; pause_screen ;;
+            11) disable_service; pause_screen ;;
+            *) printf '请输入 0 到 11 之间的序号。\n'; sleep 1 ;;
         esac
     done
 }
@@ -563,6 +615,11 @@ usage() {
 }
 
 main() {
+    case "${1:-menu}" in
+        version|-v|--version) printf 'm-ui %s\n' "$VERSION"; return 0 ;;
+        help|-h|--help) usage; return 0 ;;
+    esac
+
     ensure_config || {
         printf '无法创建配置文件：%s\n' "$MUI_CONFIG_FILE" >&2
         exit 1
@@ -578,8 +635,6 @@ main() {
         logs|log) show_logs ;;
         enable) enable_service ;;
         disable) disable_service ;;
-        version|-v|--version) printf 'm-ui %s\n' "$VERSION" ;;
-        help|-h|--help) usage ;;
         *) usage; exit 1 ;;
     esac
 }

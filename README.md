@@ -3,7 +3,7 @@
 [![CI](https://github.com/ylsislove/m-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ylsislove/m-ui/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-在 OpenWrt / PandoraBox 路由器上运行的小米电视亮屏自动启动工具。
+部署在 OpenWrt/PandoraBox 路由器上的小米电视开机自动启动第三方 APP 工具。
 
 m-ui 通过 ADB 读取电视的真实屏幕状态；当检测到屏幕由 `OFF` 变为 `ON` 时，等待设定时间，再通过电视局域网接口启动指定应用。它适合“电视亮屏后自动打开 B 站电视版”等场景。
 
@@ -82,16 +82,17 @@ m-ui
 
 ```text
 0. 退出设置
-1. 查看电视已安装应用
-2. 设置电视自启动应用
-3. 设置电视自启动应用延迟
-4. 启动 m-ui
-5. 停止 m-ui
-6. 重启 m-ui
-7. 查看 m-ui 状态
-8. 查看 m-ui 日志
-9. 设置 m-ui 开机自启
-10. 取消 m-ui 开机自启
+1. 设置电视 IP 地址
+2. 查看电视已安装应用
+3. 设置电视自启动应用
+4. 设置电视自启动应用延迟
+5. 启动 m-ui
+6. 停止 m-ui
+7. 重启 m-ui
+8. 查看 m-ui 状态
+9. 查看 m-ui 日志
+10. 设置 m-ui 开机自启
+11. 取消 m-ui 开机自启
 ```
 
 也可以直接执行非交互命令：
@@ -119,6 +120,8 @@ m-ui version
 | `AUTOSTART_APP_NAME` | 空 | 菜单显示用的应用名称 |
 | `POLL_INTERVAL` | `2` | 屏幕状态轮询间隔，单位秒 |
 | `LAUNCH_DELAY` | `8` | 检测到亮屏后的等待时间，单位秒 |
+
+电视 IP 可以直接通过菜单第 `1` 项修改；后台服务会在下一轮检测时自动使用新地址，无需重启。
 
 主日志位于 `/tmp/m-ui.log`，存放在内存文件系统中，重启路由器后会清空。文件超过约 128 KiB 时会只保留最近 200 行；m-ui 同时调用 `logger` 写入系统日志，系统日志的保存策略由路由器自身配置决定。
 
