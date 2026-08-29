@@ -25,7 +25,14 @@ cat > "$TEST_ROOT/bin/adb" <<'EOF'
 case "$*" in
     *get-state*) printf 'device\n' ;;
     *connect*) printf 'connected\n' ;;
+    *probe*)
+        if [ -f "$MUI_TEST_HTTP_STATE" ] && [ "$(cat "$MUI_TEST_HTTP_STATE")" = "offline" ]; then
+            exit 1
+        fi
+        printf 'open\n'
+        ;;
     *screen-state*)
+        [ ! -f "$MUI_TEST_ADB_ALWAYS_FAIL" ] || exit 1
         failures=0
         [ ! -f "$MUI_TEST_ADB_FAILURES" ] || failures=$(cat "$MUI_TEST_ADB_FAILURES")
         if [ "$failures" -gt 0 ]; then
@@ -61,6 +68,9 @@ cat > "$TEST_ROOT/bin/wget" <<'EOF'
 #!/bin/sh
 
 case "$*" in
+    *'request?action=isalive'*)
+        printf '%s\n' '{"status":0,"msg":"alive"}'
+        ;;
     *getinstalledapp*)
         printf '%s\n' '{"status":0,"data":{"AppInfo":[{"AppName":"云视听小电视","PackageName":"com.xiaodianshi.tv.yst"},{"AppName":"桌面","PackageName":"com.mitv.tvhome"},{"AppName":"m-ui ADB Keeper","PackageName":"io.github.ylsislove.mui.adbkeeper"}]}}'
         ;;
@@ -131,8 +141,14 @@ export MUI_TEST_ENABLED="$TEST_ROOT/enabled"
 export MUI_TEST_STATE_COUNT="$TEST_ROOT/state-count"
 export MUI_TEST_LAUNCHES="$TEST_ROOT/launches"
 export MUI_TEST_ADB_FAILURES="$TEST_ROOT/adb-failures"
-export MUI_ADB_RECOVERY_DELAY=0
-export MUI_ADB_RECOVERY_INTERVAL=1
+export MUI_TEST_ADB_ALWAYS_FAIL="$TEST_ROOT/adb-always-fail"
+export MUI_TEST_HTTP_STATE="$TEST_ROOT/http-state"
+export MUI_ADB_CONNECT_TIMEOUT=1s
+export MUI_HTTP_PROBE_TIMEOUT=1s
+export MUI_ADB_RECOVERY_VERIFY_SECONDS=1
+export MUI_ADB_RECOVERY_RETRY_DELAY=0
+export MUI_ADB_RECOVERY_MAX_ATTEMPTS=3
+export MUI_ADB_PAUSED_POLL_INTERVAL=1
 
 assert_contains() {
     haystack="$1"
@@ -248,5 +264,47 @@ assert_contains "$(cat "$MUI_LOG_FILE")" '已启动电视应用'
 assert_contains "$(cat "$MUI_LOG_FILE")" '已请求 ADB Keeper 自动恢复'
 assert_contains "$(cat "$MUI_LOG_FILE")" 'ADB Keeper 已恢复电视 ADB'
 assert_contains "$(cat "$MUI_LOG_FILE")" '电视 ADB 地址已更新：192.168.1.123:5555 -> 192.168.1.124:5555'
+
+: > "$MUI_TEST_LAUNCHES"
+: > "$MUI_LOG_FILE"
+: > "$MUI_TEST_ADB_ALWAYS_FAIL"
+printf 'online\n' > "$MUI_TEST_HTTP_STATE"
+
+"$PROJECT_DIR/m-ui" daemon &
+daemon_pid=$!
+sleep 5
+
+keeper_launch_count=$(grep -c 'io.github.ylsislove.mui.adbkeeper' "$MUI_TEST_LAUNCHES" || true)
+[ "$keeper_launch_count" -eq 3 ] || {
+    printf '断言失败：连续失败时 ADB Keeper 启动了 %s 次，预期限制为 3 次。\n' "$keeper_launch_count" >&2
+    exit 1
+}
+
+app_launch_count=$(grep -c 'com.xiaodianshi.tv.yst' "$MUI_TEST_LAUNCHES" || true)
+[ "$app_launch_count" -eq 0 ] || {
+    printf '断言失败：ADB 恢复失败时不应启动自启应用。\n' >&2
+    exit 1
+}
+assert_contains "$(cat "$MUI_LOG_FILE")" 'ADB Keeper 连续恢复失败，已暂停本次电视在线会话'
+
+printf 'offline\n' > "$MUI_TEST_HTTP_STATE"
+sleep 2
+printf 'online\n' > "$MUI_TEST_HTTP_STATE"
+sleep 5
+kill "$daemon_pid" 2>/dev/null || true
+wait "$daemon_pid" 2>/dev/null || true
+
+keeper_launch_count=$(grep -c 'io.github.ylsislove.mui.adbkeeper' "$MUI_TEST_LAUNCHES" || true)
+[ "$keeper_launch_count" -eq 6 ] || {
+    printf '断言失败：电视重新上线后 ADB Keeper 累计启动了 %s 次，预期 6 次。\n' "$keeper_launch_count" >&2
+    exit 1
+}
+
+pause_count=$(grep -c 'ADB Keeper 连续恢复失败，已暂停本次电视在线会话' "$MUI_LOG_FILE" || true)
+[ "$pause_count" -eq 2 ] || {
+    printf '断言失败：预期两次独立在线会话各暂停一次，实际为 %s 次。\n' "$pause_count" >&2
+    exit 1
+}
+assert_contains "$(cat "$MUI_LOG_FILE")" '电视 6095 接口已离线，ADB 自恢复会话已重置'
 
 printf 'm-ui 本机模拟测试全部通过。\n'

@@ -96,7 +96,7 @@ adb shell pm grant io.github.ylsislove.mui.adbkeeper android.permission.WRITE_SE
 
 将 IP 换成电视实际地址。第一次连接时需要在电视上确认这台电脑的 ADB 授权。
 
-Keeper 不申请联网权限、不常驻、不显示界面。m-ui 仅在确认 Keeper 已安装、电视 `6095` 在线但 ADB 不可用时唤起它。Keeper 写入 Android 标准的 `development_settings_enabled` 和 `adb_enabled`，然后立即退出。
+Keeper 不申请联网权限、不常驻、不显示界面。m-ui 仅在确认 Keeper 已安装、电视 `6095` 在线但 ADB 不可用时唤起它。Keeper 写入 Android 标准的 `development_settings_enabled` 和 `adb_enabled`，然后立即退出。默认单次最多验证 10 秒，间隔 5 秒，每次电视在线会话最多尝试 3 次。
 
 可以做一次彻底断电验证。成功时，`m-ui logs` 会依次出现“已请求 ADB Keeper 自动恢复”和“ADB Keeper 已恢复电视 ADB”。
 

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"net"
+	"testing"
+	"time"
+)
 
 func TestParseScreenState(t *testing.T) {
 	tests := []struct {
@@ -43,5 +48,19 @@ func TestParseWakefulness(t *testing.T) {
 func TestChecksum(t *testing.T) {
 	if got := checksum([]byte{1, 2, 3, 255}); got != 261 {
 		t.Fatalf("checksum() = %d, want 261", got)
+	}
+}
+
+func TestProbeTCP(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := probeTCP(ctx, listener.Addr().String()); err != nil {
+		t.Fatalf("probeTCP() returned %v", err)
 	}
 }

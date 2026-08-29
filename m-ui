@@ -2,7 +2,7 @@
 
 # m-ui - Xiaomi TV auto-launch manager for OpenWrt/PandoraBox.
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 
 MUI_CONFIG_DIR="${MUI_CONFIG_DIR:-/etc/m-ui}"
 MUI_CONFIG_FILE="${MUI_CONFIG_FILE:-$MUI_CONFIG_DIR/config}"
@@ -13,8 +13,12 @@ MUI_ADB_BIN="${MUI_ADB_BIN:-/usr/lib/m-ui/m-adb}"
 MUI_WGET_BIN="${MUI_WGET_BIN:-wget}"
 MUI_JSONFILTER_BIN="${MUI_JSONFILTER_BIN:-jsonfilter}"
 MUI_ADB_KEEPER_PACKAGE="${MUI_ADB_KEEPER_PACKAGE:-io.github.ylsislove.mui.adbkeeper}"
-MUI_ADB_RECOVERY_INTERVAL="${MUI_ADB_RECOVERY_INTERVAL:-30}"
-MUI_ADB_RECOVERY_DELAY="${MUI_ADB_RECOVERY_DELAY:-5}"
+MUI_ADB_CONNECT_TIMEOUT="${MUI_ADB_CONNECT_TIMEOUT:-2s}"
+MUI_HTTP_PROBE_TIMEOUT="${MUI_HTTP_PROBE_TIMEOUT:-2s}"
+MUI_ADB_RECOVERY_VERIFY_SECONDS="${MUI_ADB_RECOVERY_VERIFY_SECONDS:-10}"
+MUI_ADB_RECOVERY_RETRY_DELAY="${MUI_ADB_RECOVERY_RETRY_DELAY:-5}"
+MUI_ADB_RECOVERY_MAX_ATTEMPTS="${MUI_ADB_RECOVERY_MAX_ATTEMPTS:-3}"
+MUI_ADB_PAUSED_POLL_INTERVAL="${MUI_ADB_PAUSED_POLL_INTERVAL:-30}"
 
 DEFAULT_TV_IP="192.168.1.100"
 DEFAULT_TV_ADB_PORT="5555"
@@ -441,9 +445,10 @@ adb_address() {
 }
 
 read_screen_state() {
-    local address state
+    local address timeout state
     address="$1"
-    state=$("$MUI_ADB_BIN" -s "$address" screen-state 2>/dev/null | head -n 1 | tr -d '\r')
+    timeout="${2:-$MUI_ADB_CONNECT_TIMEOUT}"
+    state=$("$MUI_ADB_BIN" -s "$address" -timeout "$timeout" screen-state 2>/dev/null | head -n 1 | tr -d '\r')
 
     case "$state" in
         ON|OFF) printf '%s' "$state"; return 0 ;;
@@ -451,8 +456,20 @@ read_screen_state() {
     return 1
 }
 
-request_adb_recovery() {
-    local tv_ip url response status packages
+tv_http_is_alive() {
+    local tv_ip url response status
+    tv_ip=$(config_get TV_IP)
+    [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
+
+    "$MUI_ADB_BIN" -s "${tv_ip}:6095" -timeout "$MUI_HTTP_PROBE_TIMEOUT" probe >/dev/null 2>&1 || return 1
+    url="http://${tv_ip}:6095/request?action=isalive"
+    response=$("$MUI_WGET_BIN" -qO- "$url" 2>/dev/null) || return 1
+    status=$("$MUI_JSONFILTER_BIN" -s "$response" -e '@.status' 2>/dev/null)
+    [ "$status" = "0" ]
+}
+
+adb_keeper_is_installed() {
+    local tv_ip url response packages
     tv_ip=$(config_get TV_IP)
     [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
 
@@ -460,12 +477,84 @@ request_adb_recovery() {
     url="http://${tv_ip}:6095/controller?action=getinstalledapp&count=999&changeIcon=0"
     response=$("$MUI_WGET_BIN" -qO- "$url" 2>/dev/null) || return 1
     packages=$("$MUI_JSONFILTER_BIN" -s "$response" -e '@.data.AppInfo[*].PackageName' 2>/dev/null)
-    printf '%s\n' "$packages" | grep -F -x "$MUI_ADB_KEEPER_PACKAGE" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$packages" | grep -F -x "$MUI_ADB_KEEPER_PACKAGE" >/dev/null 2>&1
+}
+
+start_adb_keeper() {
+    local tv_ip url response status
+    tv_ip=$(config_get TV_IP)
+    [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
 
     url="http://${tv_ip}:6095/controller?action=startapp&type=packagename&packagename=${MUI_ADB_KEEPER_PACKAGE}"
     response=$("$MUI_WGET_BIN" -qO- "$url" 2>/dev/null) || return 1
     status=$("$MUI_JSONFILTER_BIN" -s "$response" -e '@.status' 2>/dev/null)
     [ "$status" = "0" ]
+}
+
+wait_for_adb_recovery() {
+    local address verify_seconds deadline now state
+    address="$1"
+    verify_seconds="$MUI_ADB_RECOVERY_VERIFY_SECONDS"
+    valid_positive_number "$verify_seconds" || verify_seconds=10
+    deadline=$(($(date +%s) + verify_seconds))
+    RECOVERED_SCREEN_STATE=""
+
+    while :; do
+        state=$(read_screen_state "$address" "1s")
+        if [ -n "$state" ]; then
+            RECOVERED_SCREEN_STATE="$state"
+            return 0
+        fi
+        now=$(date +%s)
+        [ "$now" -ge "$deadline" ] && return 1
+        sleep 1
+    done
+}
+
+run_adb_recovery_session() {
+    local address attempt max_attempts retry_delay verify_seconds
+    address="$1"
+    max_attempts="$MUI_ADB_RECOVERY_MAX_ATTEMPTS"
+    retry_delay="$MUI_ADB_RECOVERY_RETRY_DELAY"
+    verify_seconds="$MUI_ADB_RECOVERY_VERIFY_SECONDS"
+    valid_positive_number "$max_attempts" || max_attempts=3
+    valid_launch_delay "$retry_delay" || retry_delay=5
+    valid_positive_number "$verify_seconds" || verify_seconds=10
+    RECOVERY_RESULT=""
+    RECOVERED_SCREEN_STATE=""
+
+    if ! adb_keeper_is_installed; then
+        RECOVERY_RESULT="unavailable"
+        return 1
+    fi
+
+    attempt=1
+    while [ "$attempt" -le "$max_attempts" ]; do
+        if ! tv_http_is_alive; then
+            RECOVERY_RESULT="offline"
+            return 1
+        fi
+
+        if start_adb_keeper; then
+            log_message "电视在线但 ADB 不可用，已请求 ADB Keeper 自动恢复（${attempt}/${max_attempts}）。"
+            if wait_for_adb_recovery "$address"; then
+                RECOVERY_RESULT="success"
+                return 0
+            fi
+            log_message "ADB Keeper 第 ${attempt}/${max_attempts} 次恢复失败：${verify_seconds} 秒内 ADB 未恢复。"
+        else
+            log_message "ADB Keeper 第 ${attempt}/${max_attempts} 次启动请求失败。"
+        fi
+
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            RECOVERY_RESULT="paused"
+            log_message "ADB Keeper 连续恢复失败，已暂停本次电视在线会话；电视重新上线或 m-ui 重启后再试。"
+            return 1
+        fi
+
+        sleep "$retry_delay"
+        attempt=$((attempt + 1))
+    done
 }
 
 launch_selected_app() {
@@ -503,7 +592,7 @@ daemon_cleanup() {
 
 run_daemon() {
     local address previous_address previous_state current_state confirm_state poll_interval launch_delay connection_logged
-    local recovery_pending recovery_delay recovery_interval last_recovery_attempt now
+    local http_state recovery_paused last_slow_adb_check now check_adb paused_poll_interval
 
     ensure_config || exit 1
     require_command "$MUI_ADB_BIN" || {
@@ -526,8 +615,9 @@ run_daemon() {
     previous_address=""
     previous_state=""
     connection_logged=""
-    recovery_pending=""
-    last_recovery_attempt=0
+    http_state="unknown"
+    recovery_paused=""
+    last_slow_adb_check=0
     log_message "m-ui ${VERSION} 监控服务已启动。"
 
     while :; do
@@ -536,53 +626,50 @@ run_daemon() {
             log_message "电视 ADB 地址已更新：${previous_address} -> ${address}"
             previous_state=""
             connection_logged=""
-            recovery_pending=""
-            last_recovery_attempt=0
+            http_state="unknown"
+            recovery_paused=""
+            last_slow_adb_check=0
         fi
         previous_address="$address"
         poll_interval=$(config_get POLL_INTERVAL)
         launch_delay=$(config_get LAUNCH_DELAY)
         valid_positive_number "$poll_interval" || poll_interval="$DEFAULT_POLL_INTERVAL"
         valid_launch_delay "$launch_delay" || launch_delay="$DEFAULT_LAUNCH_DELAY"
-        recovery_interval="$MUI_ADB_RECOVERY_INTERVAL"
-        recovery_delay="$MUI_ADB_RECOVERY_DELAY"
-        valid_positive_number "$recovery_interval" || recovery_interval=30
-        valid_launch_delay "$recovery_delay" || recovery_delay=5
+        paused_poll_interval="$MUI_ADB_PAUSED_POLL_INTERVAL"
+        valid_positive_number "$paused_poll_interval" || paused_poll_interval=30
 
-        current_state=$(read_screen_state "$address")
-        if [ -z "$current_state" ]; then
-            now=$(date +%s)
-            if [ "$last_recovery_attempt" -eq 0 ] || [ $((now - last_recovery_attempt)) -ge "$recovery_interval" ]; then
-                last_recovery_attempt="$now"
-                if request_adb_recovery; then
-                    recovery_pending="yes"
-                    log_message "电视在线但 ADB 不可用，已请求 ADB Keeper 自动恢复。"
-                    sleep "$recovery_delay"
-                    current_state=$(read_screen_state "$address")
-                fi
+        now=$(date +%s)
+        check_adb="yes"
+        if { [ "$http_state" = "offline" ] || [ "$recovery_paused" = "yes" ]; } && [ "$connection_logged" = "failed" ]; then
+            if [ "$last_slow_adb_check" -gt 0 ] && [ $((now - last_slow_adb_check)) -lt "$paused_poll_interval" ]; then
+                check_adb=""
             fi
         fi
 
-        if [ -z "$current_state" ]; then
-            if [ "$connection_logged" != "failed" ]; then
-                log_message "无法连接电视 ADB（${address}），正在等待电视上线或 ADB Keeper 恢复。"
-                connection_logged="failed"
+        current_state=""
+        if [ "$check_adb" = "yes" ]; then
+            if [ "$http_state" = "offline" ] || [ "$recovery_paused" = "yes" ]; then
+                last_slow_adb_check="$now"
             fi
-            sleep "$poll_interval"
-            continue
+            current_state=$(read_screen_state "$address")
         fi
 
-        if [ "$connection_logged" != "ready" ]; then
-            log_message "电视 ADB 已连接：${address}"
-            connection_logged="ready"
-        fi
+        if [ -n "$current_state" ]; then
+            if [ "$connection_logged" != "ready" ]; then
+                log_message "电视 ADB 已连接：${address}"
+                connection_logged="ready"
+            fi
+            if [ "$http_state" = "offline" ]; then
+                http_state="unknown"
+                last_slow_adb_check=0
+            fi
 
-        if [ "$recovery_pending" = "yes" ]; then
-            recovery_pending=""
-            previous_state="$current_state"
-            log_message "ADB Keeper 已恢复电视 ADB：${address}"
-            if [ "$current_state" = "ON" ]; then
-                log_message "检测到 ADB 恢复时电视已亮屏，${launch_delay} 秒后启动应用。"
+            if [ -z "$previous_state" ]; then
+                previous_state="$current_state"
+                log_message "电视初始屏幕状态：${current_state}"
+            elif [ "$previous_state" = "OFF" ] && [ "$current_state" = "ON" ]; then
+                log_message "检测到电视由息屏进入亮屏，${launch_delay} 秒后启动应用。"
+                previous_state="$current_state"
                 sleep "$launch_delay"
                 confirm_state=$(read_screen_state "$address")
                 if [ "$confirm_state" = "ON" ]; then
@@ -590,22 +677,79 @@ run_daemon() {
                 else
                     log_message '等待期间电视再次息屏，已取消启动应用。'
                 fi
-            fi
-        elif [ -z "$previous_state" ]; then
-            previous_state="$current_state"
-            log_message "电视初始屏幕状态：${current_state}"
-        elif [ "$previous_state" = "OFF" ] && [ "$current_state" = "ON" ]; then
-            log_message "检测到电视由息屏进入亮屏，${launch_delay} 秒后启动应用。"
-            previous_state="$current_state"
-            sleep "$launch_delay"
-            confirm_state=$(read_screen_state "$address")
-            if [ "$confirm_state" = "ON" ]; then
-                launch_selected_app
             else
-                log_message '等待期间电视再次息屏，已取消启动应用。'
+                previous_state="$current_state"
+            fi
+
+            sleep "$poll_interval"
+            continue
+        fi
+
+        if [ "$connection_logged" != "failed" ]; then
+            log_message "无法连接电视 ADB（${address}），正在等待电视上线或 ADB Keeper 恢复。"
+            connection_logged="failed"
+        fi
+
+        if tv_http_is_alive; then
+            if [ "$http_state" != "online" ]; then
+                http_state="online"
+                recovery_paused=""
+                last_slow_adb_check=0
+                log_message "电视 6095 接口已上线，开始 ADB 自恢复。"
+            fi
+
+            if [ "$recovery_paused" != "yes" ]; then
+                if run_adb_recovery_session "$address"; then
+                    current_state="$RECOVERED_SCREEN_STATE"
+                    connection_logged="ready"
+                    log_message "电视 ADB 已连接：${address}"
+                    log_message "ADB Keeper 已恢复电视 ADB：${address}"
+                    if [ "$current_state" = "ON" ] && [ "$previous_state" != "ON" ]; then
+                        previous_state="$current_state"
+                        log_message "检测到 ADB 恢复时电视已亮屏，${launch_delay} 秒后启动应用。"
+                        sleep "$launch_delay"
+                        confirm_state=$(read_screen_state "$address")
+                        if [ "$confirm_state" = "ON" ]; then
+                            launch_selected_app
+                        else
+                            log_message '等待期间电视再次息屏，已取消启动应用。'
+                        fi
+                    else
+                        previous_state="$current_state"
+                    fi
+                    sleep "$poll_interval"
+                    continue
+                fi
+
+                case "$RECOVERY_RESULT" in
+                    unavailable)
+                        recovery_paused="yes"
+                        last_slow_adb_check=$(date +%s)
+                        log_message "未检测到 ADB Keeper，已暂停本次电视在线会话的自恢复。"
+                        ;;
+                    paused)
+                        recovery_paused="yes"
+                        last_slow_adb_check=$(date +%s)
+                        ;;
+                    offline)
+                        http_state="offline"
+                        recovery_paused=""
+                        previous_state=""
+                        last_slow_adb_check=$(date +%s)
+                        log_message "电视 6095 接口已离线，ADB 自恢复会话已重置。"
+                        ;;
+                esac
             fi
         else
-            previous_state="$current_state"
+            if [ "$http_state" != "offline" ]; then
+                if [ "$http_state" = "online" ]; then
+                    log_message "电视 6095 接口已离线，ADB 自恢复会话已重置。"
+                fi
+                http_state="offline"
+                recovery_paused=""
+                previous_state=""
+                last_slow_adb_check="$now"
+            fi
         fi
 
         sleep "$poll_interval"

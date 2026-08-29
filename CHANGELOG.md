@@ -2,6 +2,20 @@
 
 本项目遵循语义化版本号。
 
+## [1.3.1] - 2026-08-29
+
+### 改进
+
+- `6095` 上线后立即启动 ADB Keeper 恢复，恢复期间每秒检查 ADB。
+- 单次恢复最多等待 10 秒，间隔 5 秒后重试，每次电视在线会话最多尝试 3 次。
+- 三次失败后暂停本次会话的 Keeper 唤起，改为每 30 秒低频检查 ADB；电视重新上线、m-ui 重启或 IP 变更时重置。
+- 避免短暂 ADB 抖动且电视原本已亮屏时，误将 ADB 恢复当作一次冷启动。
+- `m-adb` 增加带超时的 TCP `probe` 动作，用于在老版 BusyBox 路由器上快速检查 `6095`。
+
+### 测试
+
+- 增加连续恢复失败、3 次上限、暂停恢复及离线→上线重置的自动化测试。
+
 ## [1.3.0] - 2026-08-29
 
 ### 新增
@@ -48,3 +62,4 @@
 [1.1.1]: https://github.com/ylsislove/m-ui/releases/tag/v1.1.1
 [1.2.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.2.0
 [1.3.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.0
+[1.3.1]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.1

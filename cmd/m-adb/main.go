@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	programVersion = "1.0.0"
+	programVersion = "1.1.0"
 	adbVersion     = 0x01000000
 	adbMaxPayload  = 4096
 	maxReadPayload = 1024 * 1024
@@ -269,6 +269,15 @@ func connectADB(ctx context.Context, address string, privateKey *rsa.PrivateKey,
 	}
 }
 
+func probeTCP(ctx context.Context, address string) error {
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return fmt.Errorf("连接 TCP 端口失败：%w", err)
+	}
+	return conn.Close()
+}
+
 func runShell(conn *adbConn, localID uint32, command string, output io.Writer) error {
 	destination := append([]byte("shell:"+command), 0)
 	if err := conn.writePacket(aOpen, localID, 0, destination); err != nil {
@@ -368,7 +377,7 @@ func defaultKeyPath() string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "用法：m-adb [-s IP:端口] [--key 私钥路径] connect|get-state|screen-state|shell [命令]")
+	fmt.Fprintln(os.Stderr, "用法：m-adb [-s IP:端口] [--timeout 时长] [--key 私钥路径] connect|get-state|probe|screen-state|shell [命令]")
 }
 
 func main() {
@@ -407,13 +416,22 @@ func main() {
 		address += ":5555"
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	if action == "probe" {
+		if err := probeTCP(ctx, address); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("open")
+		return
+	}
+
 	privateKey, err := loadOrCreateKey(*keyPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 	conn, err := connectADB(ctx, address, privateKey, *deviceName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
