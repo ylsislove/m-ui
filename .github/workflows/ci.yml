@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l ./cmd)"
+
+      - name: Check shell syntax
+        run: sh -n m-ui m-ui.init install-router.sh uninstall-router.sh build-m-adb.sh tests/test_m_ui.sh
+
+      - name: Test Go code
+        run: go test ./...
+
+      - name: Test m-ui behavior
+        run: sh tests/test_m_ui.sh
+
+      - name: Build ARMv7 client
+        run: sh build-m-adb.sh

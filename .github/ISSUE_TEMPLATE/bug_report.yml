@@ -1,0 +1,49 @@
+name: Bug 报告
+description: 报告可复现的 m-ui 问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传密码、SSH/ADB 私钥、真实公网地址或未经脱敏的路由器配置。
+  - type: input
+    id: version
+    attributes:
+      label: m-ui 版本
+      placeholder: 例如 1.1.1
+    validations:
+      required: true
+  - type: input
+    id: router
+    attributes:
+      label: 路由器环境
+      placeholder: 型号、固件版本、CPU 架构
+    validations:
+      required: true
+  - type: input
+    id: television
+    attributes:
+      label: 电视环境
+      placeholder: 型号与系统版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请写出可以稳定重现问题的操作顺序。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+    validations:
+      required: true

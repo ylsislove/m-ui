@@ -1,0 +1,19 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+
+# Never commit router or ADB private keys.
+adbkey
+adbkey.pub
+*.pem
+*.key
+m-ui-router-deploy
+m-ui-router-deploy.pub
+
+# Local build/test scratch files.
+coverage.out
+dist/*
+!dist/m-adb-linux-armv7

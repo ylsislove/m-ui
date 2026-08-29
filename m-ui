@@ -1,0 +1,587 @@
+#!/bin/sh
+
+# m-ui - Xiaomi TV auto-launch manager for OpenWrt/PandoraBox.
+
+VERSION="1.1.1"
+
+MUI_CONFIG_DIR="${MUI_CONFIG_DIR:-/etc/m-ui}"
+MUI_CONFIG_FILE="${MUI_CONFIG_FILE:-$MUI_CONFIG_DIR/config}"
+MUI_PID_FILE="${MUI_PID_FILE:-/var/run/m-ui.pid}"
+MUI_LOG_FILE="${MUI_LOG_FILE:-/tmp/m-ui.log}"
+MUI_INIT_SCRIPT="${MUI_INIT_SCRIPT:-/etc/init.d/m-ui}"
+MUI_ADB_BIN="${MUI_ADB_BIN:-/usr/lib/m-ui/m-adb}"
+MUI_WGET_BIN="${MUI_WGET_BIN:-wget}"
+MUI_JSONFILTER_BIN="${MUI_JSONFILTER_BIN:-jsonfilter}"
+
+DEFAULT_TV_IP="192.168.1.100"
+DEFAULT_TV_ADB_PORT="5555"
+DEFAULT_POLL_INTERVAL="2"
+DEFAULT_LAUNCH_DELAY="8"
+
+APP_NAMES_FILE="/tmp/m-ui-app-names.$$"
+APP_PACKAGES_FILE="/tmp/m-ui-app-packages.$$"
+
+cleanup_app_files() {
+    rm -f "$APP_NAMES_FILE" "$APP_PACKAGES_FILE"
+}
+
+ensure_config() {
+    [ -d "$MUI_CONFIG_DIR" ] || mkdir -p "$MUI_CONFIG_DIR" || return 1
+
+    if [ ! -f "$MUI_CONFIG_FILE" ]; then
+        {
+            printf 'TV_IP=%s\n' "$DEFAULT_TV_IP"
+            printf 'TV_ADB_PORT=%s\n' "$DEFAULT_TV_ADB_PORT"
+            printf 'AUTOSTART_PACKAGE=\n'
+            printf 'AUTOSTART_APP_NAME=\n'
+            printf 'POLL_INTERVAL=%s\n' "$DEFAULT_POLL_INTERVAL"
+            printf 'LAUNCH_DELAY=%s\n' "$DEFAULT_LAUNCH_DELAY"
+        } > "$MUI_CONFIG_FILE" || return 1
+        chmod 600 "$MUI_CONFIG_FILE" 2>/dev/null
+    fi
+}
+
+config_get() {
+    local key value
+    key="$1"
+    value=$(awk -v wanted="$key" '
+        index($0, wanted "=") == 1 {
+            sub("^[^=]*=", "")
+            result=$0
+        }
+        END { print result }
+    ' "$MUI_CONFIG_FILE" 2>/dev/null)
+    printf '%s' "$value"
+}
+
+config_set() {
+    local key value tmp
+    key="$1"
+    value="$2"
+    tmp="${MUI_CONFIG_FILE}.tmp.$$"
+
+    awk -v wanted="$key" -v replacement="$value" '
+        index($0, wanted "=") == 1 {
+            print wanted "=" replacement
+            found=1
+            next
+        }
+        { print }
+        END {
+            if (!found) print wanted "=" replacement
+        }
+    ' "$MUI_CONFIG_FILE" > "$tmp" || {
+        rm -f "$tmp"
+        return 1
+    }
+
+    mv "$tmp" "$MUI_CONFIG_FILE" || return 1
+    chmod 600 "$MUI_CONFIG_FILE" 2>/dev/null
+}
+
+timestamp() {
+    date '+%Y-%m-%d %H:%M:%S'
+}
+
+rotate_log() {
+    local size tmp
+    [ -f "$MUI_LOG_FILE" ] || return 0
+    size=$(wc -c < "$MUI_LOG_FILE" 2>/dev/null)
+    [ -n "$size" ] || return 0
+    [ "$size" -le 131072 ] && return 0
+
+    tmp="${MUI_LOG_FILE}.tmp.$$"
+    tail -n 200 "$MUI_LOG_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$MUI_LOG_FILE"
+}
+
+log_message() {
+    local message
+    message="$*"
+    rotate_log
+    printf '[%s] %s\n' "$(timestamp)" "$message" >> "$MUI_LOG_FILE"
+    command -v logger >/dev/null 2>&1 && logger -t m-ui "$message"
+}
+
+valid_package_name() {
+    case "$1" in
+        ''|*[!A-Za-z0-9._-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+valid_positive_number() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) [ "$1" -gt 0 ] 2>/dev/null ;;
+    esac
+}
+
+valid_launch_delay() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) [ "$1" -ge 0 ] 2>/dev/null && [ "$1" -le 300 ] 2>/dev/null ;;
+    esac
+}
+
+service_pid() {
+    local pid
+    [ -f "$MUI_PID_FILE" ] || return 1
+    pid=$(cat "$MUI_PID_FILE" 2>/dev/null)
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s' "$pid"
+}
+
+service_is_running() {
+    service_pid >/dev/null 2>&1
+}
+
+service_is_enabled() {
+    [ -x "$MUI_INIT_SCRIPT" ] || return 1
+    "$MUI_INIT_SCRIPT" enabled >/dev/null 2>&1
+}
+
+wait_until_running() {
+    local waited limit
+    waited=0
+    limit="${1:-5}"
+    while [ "$waited" -lt "$limit" ]; do
+        service_is_running && return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    service_is_running
+}
+
+wait_until_stopped() {
+    local waited limit
+    waited=0
+    limit="${1:-15}"
+    while [ "$waited" -lt "$limit" ]; do
+        service_is_running || return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    ! service_is_running
+}
+
+status_text() {
+    if service_is_running; then
+        printf '已运行'
+    else
+        printf '未运行'
+    fi
+}
+
+enabled_text() {
+    if service_is_enabled; then
+        printf '是'
+    else
+        printf '否'
+    fi
+}
+
+selected_app_text() {
+    local package app_name
+    package=$(config_get AUTOSTART_PACKAGE)
+    app_name=$(config_get AUTOSTART_APP_NAME)
+    if [ -z "$package" ]; then
+        printf '未设置'
+    elif [ -n "$app_name" ]; then
+        printf '%s（%s）' "$package" "$app_name"
+    else
+        printf '%s' "$package"
+    fi
+}
+
+launch_delay_text() {
+    local launch_delay
+    launch_delay=$(config_get LAUNCH_DELAY)
+    valid_launch_delay "$launch_delay" || launch_delay="$DEFAULT_LAUNCH_DELAY"
+    printf '%s 秒' "$launch_delay"
+}
+
+print_status() {
+    printf 'm-ui 状态：%s\n' "$(status_text)"
+    printf '是否开机自启：%s\n' "$(enabled_text)"
+    printf '电视自启动应用：%s\n' "$(selected_app_text)"
+    printf '电视自启动应用延迟：%s\n' "$(launch_delay_text)"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        printf '缺少必要命令：%s\n' "$1" >&2
+        return 1
+    }
+}
+
+fetch_apps() {
+    local tv_ip url response
+    cleanup_app_files
+    tv_ip=$(config_get TV_IP)
+    [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
+    url="http://${tv_ip}:6095/controller?action=getinstalledapp&count=999&changeIcon=0"
+
+    require_command "$MUI_WGET_BIN" || return 1
+    require_command "$MUI_JSONFILTER_BIN" || return 1
+
+    response=$("$MUI_WGET_BIN" -qO- "$url" 2>/dev/null) || {
+        printf '无法连接电视 %s:6095，请确认电视在线。\n' "$tv_ip" >&2
+        return 1
+    }
+
+    "$MUI_JSONFILTER_BIN" -s "$response" -e '@.data.AppInfo[*].AppName' > "$APP_NAMES_FILE" 2>/dev/null
+    "$MUI_JSONFILTER_BIN" -s "$response" -e '@.data.AppInfo[*].PackageName' > "$APP_PACKAGES_FILE" 2>/dev/null
+
+    if [ ! -s "$APP_PACKAGES_FILE" ]; then
+        printf '电视返回了数据，但没有解析到应用列表。\n' >&2
+        cleanup_app_files
+        return 1
+    fi
+}
+
+print_apps() {
+    awk '
+        NR == FNR { names[NR]=$0; next }
+        { printf "%2d. %-24s %s\n", FNR, names[FNR], $0 }
+    ' "$APP_NAMES_FILE" "$APP_PACKAGES_FILE"
+}
+
+show_installed_apps() {
+    fetch_apps || return 1
+    printf '\n电视已安装应用：\n\n'
+    print_apps
+    cleanup_app_files
+}
+
+set_autostart_app() {
+    local choice count package app_name
+    fetch_apps || return 1
+    printf '\n请选择电视亮屏后自动启动的应用：\n\n'
+    printf ' 0. 取消设置\n'
+    print_apps
+    printf '\n请输入序号：'
+    IFS= read -r choice
+
+    case "$choice" in
+        0)
+            config_set AUTOSTART_PACKAGE ""
+            config_set AUTOSTART_APP_NAME ""
+            printf '已取消电视自启动应用。\n'
+            cleanup_app_files
+            return 0
+            ;;
+        ''|*[!0-9]*)
+            printf '输入无效。\n' >&2
+            cleanup_app_files
+            return 1
+            ;;
+    esac
+
+    count=$(wc -l < "$APP_PACKAGES_FILE" 2>/dev/null)
+    if [ "$choice" -lt 1 ] || [ "$choice" -gt "$count" ]; then
+        printf '序号超出范围。\n' >&2
+        cleanup_app_files
+        return 1
+    fi
+
+    package=$(sed -n "${choice}p" "$APP_PACKAGES_FILE")
+    app_name=$(sed -n "${choice}p" "$APP_NAMES_FILE")
+    if ! valid_package_name "$package"; then
+        printf '应用包名格式异常，未保存。\n' >&2
+        cleanup_app_files
+        return 1
+    fi
+
+    config_set AUTOSTART_PACKAGE "$package" || return 1
+    config_set AUTOSTART_APP_NAME "$app_name" || return 1
+    cleanup_app_files
+    printf '已设置：%s（%s）\n' "$app_name" "$package"
+}
+
+set_launch_delay() {
+    local current_delay new_delay
+    current_delay=$(config_get LAUNCH_DELAY)
+    valid_launch_delay "$current_delay" || current_delay="$DEFAULT_LAUNCH_DELAY"
+
+    printf '当前电视自启动应用延迟：%s 秒\n' "$current_delay"
+    printf '请输入新的延迟秒数 [0-300]：'
+    IFS= read -r new_delay
+
+    if ! valid_launch_delay "$new_delay"; then
+        printf '输入无效，请输入 0 到 300 之间的整数。\n' >&2
+        return 1
+    fi
+
+    config_set LAUNCH_DELAY "$new_delay" || return 1
+    printf '电视自启动应用延迟已设置为 %s 秒。\n' "$new_delay"
+}
+
+run_init_action() {
+    local action
+    action="$1"
+    if [ ! -x "$MUI_INIT_SCRIPT" ]; then
+        printf 'm-ui 启动脚本不存在：%s\n' "$MUI_INIT_SCRIPT" >&2
+        return 1
+    fi
+    "$MUI_INIT_SCRIPT" "$action"
+}
+
+start_service() {
+    if service_is_running; then
+        printf 'm-ui 已在运行。\n'
+        return 0
+    fi
+    run_init_action start || return 1
+    if wait_until_running 5; then
+        printf 'm-ui 启动成功。\n'
+    else
+        printf 'm-ui 启动失败，请查看日志。\n' >&2
+        return 1
+    fi
+}
+
+stop_service() {
+    if ! service_is_running; then
+        printf 'm-ui 当前未运行。\n'
+        return 0
+    fi
+    run_init_action stop || return 1
+    if ! wait_until_stopped 15; then
+        printf 'm-ui 停止失败，请查看日志。\n' >&2
+        return 1
+    fi
+    printf 'm-ui 已停止。\n'
+}
+
+restart_service() {
+    run_init_action restart || return 1
+    if wait_until_running 10; then
+        printf 'm-ui 重启成功。\n'
+    else
+        printf 'm-ui 重启失败，请查看日志。\n' >&2
+        return 1
+    fi
+}
+
+enable_service() {
+    run_init_action enable || return 1
+    printf '已设置 m-ui 开机自启。\n'
+}
+
+disable_service() {
+    run_init_action disable || return 1
+    printf '已取消 m-ui 开机自启。\n'
+}
+
+show_logs() {
+    printf '\nm-ui 最近日志：\n\n'
+    if [ -s "$MUI_LOG_FILE" ]; then
+        tail -n 80 "$MUI_LOG_FILE"
+    else
+        printf '暂无日志。\n'
+    fi
+}
+
+adb_address() {
+    local tv_ip adb_port
+    tv_ip=$(config_get TV_IP)
+    adb_port=$(config_get TV_ADB_PORT)
+    [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
+    [ -n "$adb_port" ] || adb_port="$DEFAULT_TV_ADB_PORT"
+    printf '%s:%s' "$tv_ip" "$adb_port"
+}
+
+read_screen_state() {
+    local address state
+    address="$1"
+    state=$("$MUI_ADB_BIN" -s "$address" screen-state 2>/dev/null | head -n 1 | tr -d '\r')
+
+    case "$state" in
+        ON|OFF) printf '%s' "$state"; return 0 ;;
+    esac
+    return 1
+}
+
+launch_selected_app() {
+    local package app_name tv_ip url response status
+    package=$(config_get AUTOSTART_PACKAGE)
+    app_name=$(config_get AUTOSTART_APP_NAME)
+    tv_ip=$(config_get TV_IP)
+    [ -n "$tv_ip" ] || tv_ip="$DEFAULT_TV_IP"
+
+    if ! valid_package_name "$package"; then
+        log_message '检测到电视亮屏，但尚未设置自启动应用。'
+        return 1
+    fi
+
+    url="http://${tv_ip}:6095/controller?action=startapp&type=packagename&packagename=${package}"
+    response=$("$MUI_WGET_BIN" -qO- "$url" 2>/dev/null) || {
+        log_message "启动应用失败：无法连接电视 HTTP 接口（${package}）"
+        return 1
+    }
+
+    status=$("$MUI_JSONFILTER_BIN" -s "$response" -e '@.status' 2>/dev/null)
+    if [ "$status" = "0" ]; then
+        [ -n "$app_name" ] || app_name="$package"
+        log_message "已启动电视应用：${app_name}（${package}）"
+        return 0
+    fi
+
+    log_message "电视拒绝启动应用：${package}，返回状态 ${status:-未知}"
+    return 1
+}
+
+daemon_cleanup() {
+    rm -f "$MUI_PID_FILE"
+}
+
+run_daemon() {
+    local address previous_state current_state confirm_state poll_interval launch_delay connection_logged
+
+    ensure_config || exit 1
+    require_command "$MUI_ADB_BIN" || {
+        log_message "缺少 adb，m-ui 无法启动。请先安装 OpenWrt adb 软件包。"
+        exit 1
+    }
+    require_command "$MUI_WGET_BIN" || exit 1
+    require_command "$MUI_JSONFILTER_BIN" || exit 1
+
+    if service_is_running; then
+        printf 'm-ui 已在运行。\n' >&2
+        exit 1
+    fi
+
+    printf '%s\n' "$$" > "$MUI_PID_FILE" || exit 1
+    trap 'daemon_cleanup; exit 0' INT TERM
+    trap 'daemon_cleanup' EXIT
+
+    export HOME="${HOME:-/root}"
+    previous_state=""
+    connection_logged=""
+    log_message "m-ui ${VERSION} 监控服务已启动。"
+
+    while :; do
+        address=$(adb_address)
+        poll_interval=$(config_get POLL_INTERVAL)
+        launch_delay=$(config_get LAUNCH_DELAY)
+        valid_positive_number "$poll_interval" || poll_interval="$DEFAULT_POLL_INTERVAL"
+        valid_launch_delay "$launch_delay" || launch_delay="$DEFAULT_LAUNCH_DELAY"
+
+        current_state=$(read_screen_state "$address")
+        if [ -z "$current_state" ]; then
+            if [ "$connection_logged" != "failed" ]; then
+                log_message "无法连接电视 ADB（${address}），请确认电视已开启 ADB 并允许此路由器调试。"
+                connection_logged="failed"
+            fi
+            sleep "$poll_interval"
+            continue
+        fi
+
+        if [ "$connection_logged" != "ready" ]; then
+            log_message "电视 ADB 已连接：${address}"
+            connection_logged="ready"
+        fi
+
+        if [ -z "$previous_state" ]; then
+            previous_state="$current_state"
+            log_message "电视初始屏幕状态：${current_state}"
+        elif [ "$previous_state" = "OFF" ] && [ "$current_state" = "ON" ]; then
+            log_message "检测到电视由息屏进入亮屏，${launch_delay} 秒后启动应用。"
+            previous_state="$current_state"
+            sleep "$launch_delay"
+            confirm_state=$(read_screen_state "$address")
+            if [ "$confirm_state" = "ON" ]; then
+                launch_selected_app
+            else
+                log_message '等待期间电视再次息屏，已取消启动应用。'
+            fi
+        else
+            previous_state="$current_state"
+        fi
+
+        sleep "$poll_interval"
+    done
+}
+
+pause_screen() {
+    printf '\n按回车键返回菜单...'
+    IFS= read -r _unused
+}
+
+print_menu() {
+    printf '\033[2J\033[H'
+    printf '========================================\n'
+    printf '           m-ui 管理脚本 %s\n' "$VERSION"
+    printf '========================================\n\n'
+    printf '0. 退出设置\n'
+    printf '1. 查看电视已安装应用\n'
+    printf '2. 设置电视自启动应用\n'
+    printf '3. 设置电视自启动应用延迟\n'
+    printf '4. 启动 m-ui\n'
+    printf '5. 停止 m-ui\n'
+    printf '6. 重启 m-ui\n'
+    printf '7. 查看 m-ui 状态\n'
+    printf '8. 查看 m-ui 日志\n'
+    printf '9. 设置 m-ui 开机自启\n'
+    printf '10. 取消 m-ui 开机自启\n\n'
+    print_status
+    printf '\n请输入选项 [0-10]：'
+}
+
+interactive_menu() {
+    local choice
+    ensure_config || exit 1
+    trap cleanup_app_files EXIT
+    trap 'cleanup_app_files; exit 130' INT TERM
+
+    while :; do
+        print_menu
+        IFS= read -r choice
+        printf '\n'
+        case "$choice" in
+            0) printf '已退出 m-ui 设置。\n'; return 0 ;;
+            1) show_installed_apps; pause_screen ;;
+            2) set_autostart_app; pause_screen ;;
+            3) set_launch_delay; pause_screen ;;
+            4) start_service; pause_screen ;;
+            5) stop_service; pause_screen ;;
+            6) restart_service; pause_screen ;;
+            7) print_status; pause_screen ;;
+            8) show_logs; pause_screen ;;
+            9) enable_service; pause_screen ;;
+            10) disable_service; pause_screen ;;
+            *) printf '请输入 0 到 10 之间的序号。\n'; sleep 1 ;;
+        esac
+    done
+}
+
+usage() {
+    printf '用法：m-ui [menu|daemon|start|stop|restart|status|logs|enable|disable|version]\n'
+}
+
+main() {
+    ensure_config || {
+        printf '无法创建配置文件：%s\n' "$MUI_CONFIG_FILE" >&2
+        exit 1
+    }
+
+    case "${1:-menu}" in
+        menu) interactive_menu ;;
+        daemon) run_daemon ;;
+        start) start_service ;;
+        stop) stop_service ;;
+        restart) restart_service ;;
+        status) print_status ;;
+        logs|log) show_logs ;;
+        enable) enable_service ;;
+        disable) disable_service ;;
+        version|-v|--version) printf 'm-ui %s\n' "$VERSION" ;;
+        help|-h|--help) usage ;;
+        *) usage; exit 1 ;;
+    esac
+}
+
+main "$@"

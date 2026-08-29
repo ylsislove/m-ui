@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小米电视遥控器</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><text y=%2252%22 font-size=%2252%22>📺</text></svg>">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0f1d;
+      --panel: rgba(24, 32, 52, .82);
+      --panel-strong: #1b2439;
+      --line: rgba(255, 255, 255, .10);
+      --text: #f5f7ff;
+      --muted: #98a3bb;
+      --brand: #ff6a2a;
+      --brand-soft: rgba(255, 106, 42, .16);
+      --success: #45d69b;
+      --danger: #ff5d72;
+      --shadow: 0 22px 60px rgba(0, 0, 0, .32);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(255, 106, 42, .18), transparent 28rem),
+        radial-gradient(circle at 88% 25%, rgba(69, 120, 255, .14), transparent 32rem),
+        var(--bg);
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 56px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--brand);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 0; font-size: clamp(28px, 5vw, 46px); letter-spacing: -.04em; }
+    h2 { margin: 0; font-size: 18px; }
+    p { margin: 0; }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #657089;
+      box-shadow: 0 0 0 5px rgba(101, 112, 137, .12);
+    }
+
+    .dot.online { background: var(--success); box-shadow: 0 0 0 5px rgba(69, 214, 155, .12); }
+    .dot.offline { background: var(--danger); box-shadow: 0 0 0 5px rgba(255, 93, 114, .12); }
+
+    .toolbar, .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      margin-bottom: 18px;
+      border-radius: 18px;
+    }
+
+    .address {
+      flex: 1;
+      min-width: 0;
+      padding: 11px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      outline: none;
+      color: var(--text);
+      background: rgba(0, 0, 0, .18);
+    }
+
+    .address:focus { border-color: rgba(255, 106, 42, .65); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(300px, .85fr) minmax(340px, 1.15fr);
+      gap: 18px;
+    }
+
+    .card { padding: 22px; border-radius: 22px; }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .muted { color: var(--muted); font-size: 13px; }
+
+    .button {
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, .055);
+      transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    }
+
+    .button:hover { transform: translateY(-1px); background: rgba(255, 255, 255, .10); }
+    .button:active { transform: translateY(1px) scale(.98); }
+    .button:disabled { opacity: .45; cursor: wait; transform: none; }
+    .button.primary { border-color: rgba(255, 106, 42, .42); background: var(--brand-soft); }
+    .button.power { border-color: rgba(255, 93, 114, .38); background: rgba(255, 93, 114, .12); }
+    .button.small { min-height: 36px; padding: 0 12px; font-size: 13px; }
+
+    .device-name { margin-top: 5px; color: var(--muted); font-size: 14px; }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .remote {
+      width: min(100%, 300px);
+      margin: 0 auto;
+      padding: 18px;
+      border-radius: 30px;
+      background: linear-gradient(145deg, #222c44, #121928);
+      box-shadow: inset 0 1px rgba(255,255,255,.08), 0 20px 40px rgba(0,0,0,.28);
+    }
+
+    .dpad {
+      display: grid;
+      grid-template-columns: repeat(3, 68px);
+      grid-template-rows: repeat(3, 68px);
+      justify-content: center;
+      margin: 4px auto 18px;
+    }
+
+    .round {
+      width: 64px;
+      height: 64px;
+      align-self: center;
+      justify-self: center;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 50%;
+      cursor: pointer;
+      color: #dfe5f4;
+      background: rgba(255,255,255,.055);
+      font-size: 23px;
+      transition: .14s ease;
+    }
+
+    .round:hover { background: rgba(255,255,255,.12); transform: scale(1.04); }
+    .round:active { transform: scale(.94); }
+    .round.ok { background: var(--brand); color: white; font-size: 14px; font-weight: 800; }
+    .up { grid-column: 2; grid-row: 1; }
+    .left { grid-column: 1; grid-row: 2; }
+    .ok { grid-column: 2; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+    .down { grid-column: 2; grid-row: 3; }
+
+    .key-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-top: 9px; }
+    .volume-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
+
+    .apps-card { min-height: 590px; }
+    .app-tools { display: flex; gap: 8px; }
+    .search { width: 180px; }
+
+    .apps {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      max-height: 430px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .empty {
+      grid-column: 1 / -1;
+      display: grid;
+      place-items: center;
+      min-height: 300px;
+      padding: 28px;
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .app {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(0,0,0,.12);
+    }
+
+    .app-icon {
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      object-fit: cover;
+      border-radius: 11px;
+      background: var(--panel-strong);
+    }
+
+    .app-copy { min-width: 0; flex: 1; }
+    .app-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
+    .app-package { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; margin-top: 3px; }
+
+    .log-card { margin-top: 18px; }
+    pre {
+      max-height: 260px;
+      margin: 14px 0 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 14px;
+      color: #b8c7e7;
+      background: rgba(0,0,0,.25);
+      font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 20;
+      max-width: calc(100% - 32px);
+      padding: 12px 18px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #202a40;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 16px);
+      transition: .2s ease;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast.error { background: #4b202b; }
+
+    @media (max-width: 800px) {
+      .shell { width: min(100% - 20px, 620px); padding-top: 24px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .grid { grid-template-columns: 1fr; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .apps { grid-template-columns: 1fr; }
+      .app-tools { width: 100%; }
+      .search { flex: 1; width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">LAN Remote</p>
+        <h1>小米电视遥控器</h1>
+      </div>
+      <div class="connection"><span id="statusDot" class="dot"></span><span id="statusText">正在连接…</span></div>
+    </header>
+
+    <section class="toolbar">
+      <input id="host" class="address" value="192.168.1.100" inputmode="decimal" aria-label="电视 IP 地址">
+      <button id="checkButton" class="button primary">检查连接</button>
+      <button id="appsButton" class="button">读取应用</button>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>遥控器</h2>
+            <p id="deviceName" class="device-name">等待电视信息</p>
+          </div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="button power" data-key="power">⏻ 电源</button>
+          <button class="button" data-key="home">⌂ 桌面</button>
+          <button class="button" data-key="back">↩ 返回</button>
+        </div>
+
+        <div class="remote">
+          <div class="dpad">
+            <button class="round up" data-key="up" aria-label="上">▲</button>
+            <button class="round left" data-key="left" aria-label="左">◀</button>
+            <button class="round ok" data-key="enter">确认</button>
+            <button class="round right" data-key="right" aria-label="右">▶</button>
+            <button class="round down" data-key="down" aria-label="下">▼</button>
+          </div>
+          <div class="key-row">
+            <button class="button" data-key="menu">菜单</button>
+            <button class="button" data-key="home">桌面</button>
+            <button class="button" data-key="back">返回</button>
+          </div>
+          <div class="volume-row">
+            <button class="button" data-key="volumedown">音量 −</button>
+            <button class="button" data-key="volumeup">音量 ＋</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card apps-card">
+        <div class="card-head">
+          <div>
+            <h2>已安装应用</h2>
+            <p id="appCount" class="muted">点击“读取应用”获取列表</p>
+          </div>
+          <div class="app-tools">
+            <input id="appSearch" class="address search" placeholder="搜索应用" aria-label="搜索应用">
+          </div>
+        </div>
+        <div id="apps" class="apps">
+          <div class="empty">读取电视里的应用后，可以在这里直接启动。</div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card log-card">
+      <div class="card-head">
+        <div>
+          <h2>执行结果</h2>
+          <p class="muted">显示最近一次电视返回的数据</p>
+        </div>
+        <button id="clearLog" class="button small">清空</button>
+      </div>
+      <pre id="log">尚未执行操作</pre>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script>
+    const elements = {
+      host: document.querySelector('#host'),
+      statusDot: document.querySelector('#statusDot'),
+      statusText: document.querySelector('#statusText'),
+      deviceName: document.querySelector('#deviceName'),
+      log: document.querySelector('#log'),
+      toast: document.querySelector('#toast'),
+      apps: document.querySelector('#apps'),
+      appCount: document.querySelector('#appCount'),
+      appSearch: document.querySelector('#appSearch'),
+      checkButton: document.querySelector('#checkButton'),
+      appsButton: document.querySelector('#appsButton'),
+    };
+
+    let installedApps = [];
+    let toastTimer;
+
+    const host = () => elements.host.value.trim();
+
+    function setStatus(state, text) {
+      elements.statusDot.className = `dot ${state}`;
+      elements.statusText.textContent = text;
+    }
+
+    function showToast(message, isError = false) {
+      clearTimeout(toastTimer);
+      elements.toast.textContent = message;
+      elements.toast.className = `toast show${isError ? ' error' : ''}`;
+      toastTimer = setTimeout(() => elements.toast.className = 'toast', 2600);
+    }
+
+    function showResult(title, payload) {
+      const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      elements.log.textContent = `${timestamp}  ${title}\n${JSON.stringify(payload, null, 2)}`;
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(path, options);
+      const payload = await response.json().catch(() => ({ ok: false, error: '返回内容无法解析' }));
+      if (!response.ok || !payload.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
+      return payload;
+    }
+
+    async function checkConnection(button = elements.checkButton) {
+      button.disabled = true;
+      setStatus('', '正在连接…');
+      try {
+        const payload = await request(`/api/tv/info?host=${encodeURIComponent(host())}`);
+        const info = payload.tv?.data || {};
+        elements.deviceName.textContent = info.devicename || '电视已连接';
+        setStatus('online', `已连接 · ${payload.elapsed_ms} ms`);
+        showResult('获取电视基础信息', payload.tv);
+        showToast('电视连接正常');
+      } catch (error) {
+        setStatus('offline', '连接失败');
+        showResult('连接失败', { error: error.message });
+        showToast(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function sendKey(keycode, button) {
+      if (keycode === 'power' && !confirm('电源键会切换电视当前状态，确定发送一次吗？')) return;
+      button.disabled = true;
+      try {
+        const payload = await request('/api/tv/key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host: host(), keycode }),
+        });
+        showResult(`按键：${keycode}`, payload.tv);
+        showToast(`已发送：${button.textContent.trim()}`);
+        setStatus('online', `已连接 · ${payload.elapsed_ms} ms`);
+      } catch (error) {
+        showResult(`按键失败：${keycode}`, { error: error.message });
+        showToast(error.message, true);
+        setStatus('offline', '操作失败');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function loadApps() {
+      elements.appsButton.disabled = true;
+      elements.appCount.textContent = '正在读取…';
+      try {
+        const payload = await request(`/api/tv/apps?host=${encodeURIComponent(host())}`);
+        const data = payload.tv?.data || {};
+        installedApps = Array.isArray(data.AppInfo) ? data.AppInfo : [];
+        renderApps();
+        showResult('获取已安装应用', payload.tv);
+        showToast(`读取到 ${installedApps.length} 个应用`);
+        setStatus('online', `已连接 · ${payload.elapsed_ms} ms`);
+      } catch (error) {
+        installedApps = [];
+        renderApps(error.message);
+        showResult('读取应用失败', { error: error.message });
+        showToast(error.message, true);
+      } finally {
+        elements.appsButton.disabled = false;
+      }
+    }
+
+    function renderApps(errorMessage = '') {
+      const query = elements.appSearch.value.trim().toLowerCase();
+      const filtered = installedApps.filter(app => {
+        const haystack = `${app.AppName || ''} ${app.PackageName || ''}`.toLowerCase();
+        return haystack.includes(query);
+      });
+
+      elements.apps.replaceChildren();
+      elements.appCount.textContent = installedApps.length
+        ? `${filtered.length} / ${installedApps.length} 个应用`
+        : '尚未获取应用列表';
+
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = errorMessage || (installedApps.length ? '没有匹配的应用' : '点击“读取应用”获取列表');
+        elements.apps.append(empty);
+        return;
+      }
+
+      filtered.forEach(app => {
+        const card = document.createElement('div');
+        card.className = 'app';
+
+        const image = document.createElement('img');
+        image.className = 'app-icon';
+        image.alt = '';
+        image.loading = 'lazy';
+        if (app.IconURL) image.src = app.IconURL;
+
+        const copy = document.createElement('div');
+        copy.className = 'app-copy';
+        const name = document.createElement('div');
+        name.className = 'app-name';
+        name.textContent = app.AppName || app.PackageName || '未命名应用';
+        const packageName = document.createElement('div');
+        packageName.className = 'app-package';
+        packageName.textContent = app.PackageName || '';
+        copy.append(name, packageName);
+
+        const launch = document.createElement('button');
+        launch.className = 'button small primary';
+        launch.textContent = '启动';
+        launch.addEventListener('click', () => startApp(app, launch));
+
+        card.append(image, copy, launch);
+        elements.apps.append(card);
+      });
+    }
+
+    async function startApp(app, button) {
+      button.disabled = true;
+      try {
+        const payload = await request('/api/tv/start-app', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host: host(), package: app.PackageName }),
+        });
+        showResult(`启动应用：${app.AppName || app.PackageName}`, payload.tv);
+        showToast(`已启动：${app.AppName || app.PackageName}`);
+      } catch (error) {
+        showResult(`启动应用失败：${app.PackageName}`, { error: error.message });
+        showToast(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.querySelectorAll('[data-key]').forEach(button => {
+      button.addEventListener('click', () => sendKey(button.dataset.key, button));
+    });
+    elements.checkButton.addEventListener('click', () => checkConnection());
+    elements.appsButton.addEventListener('click', loadApps);
+    elements.appSearch.addEventListener('input', () => renderApps());
+    document.querySelector('#clearLog').addEventListener('click', () => elements.log.textContent = '尚未执行操作');
+    elements.host.addEventListener('change', () => checkConnection());
+
+    checkConnection();
+  </script>
+</body>
+</html>
