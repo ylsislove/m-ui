@@ -24,7 +24,7 @@ jobs:
         run: test -z "$(gofmt -l ./cmd)"
 
       - name: Check shell syntax
-        run: sh -n m-ui m-ui.init install-router.sh uninstall-router.sh build-m-adb.sh tests/test_m_ui.sh
+        run: sh -n m-ui m-ui.init install-router.sh uninstall-router.sh build-m-adb.sh tests/test_m_ui.sh android/adb-keeper/build.sh
 
       - name: Test Go code
         run: go test ./...

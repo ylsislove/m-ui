@@ -26,6 +26,12 @@ case "$*" in
     *get-state*) printf 'device\n' ;;
     *connect*) printf 'connected\n' ;;
     *screen-state*)
+        failures=0
+        [ ! -f "$MUI_TEST_ADB_FAILURES" ] || failures=$(cat "$MUI_TEST_ADB_FAILURES")
+        if [ "$failures" -gt 0 ]; then
+            printf '%s\n' $((failures - 1)) > "$MUI_TEST_ADB_FAILURES"
+            exit 1
+        fi
         count=0
         [ ! -f "$MUI_TEST_STATE_COUNT" ] || count=$(cat "$MUI_TEST_STATE_COUNT")
         count=$((count + 1))
@@ -56,7 +62,7 @@ cat > "$TEST_ROOT/bin/wget" <<'EOF'
 
 case "$*" in
     *getinstalledapp*)
-        printf '%s\n' '{"status":0,"data":{"AppInfo":[{"AppName":"云视听小电视","PackageName":"com.xiaodianshi.tv.yst"},{"AppName":"桌面","PackageName":"com.mitv.tvhome"}]}}'
+        printf '%s\n' '{"status":0,"data":{"AppInfo":[{"AppName":"云视听小电视","PackageName":"com.xiaodianshi.tv.yst"},{"AppName":"桌面","PackageName":"com.mitv.tvhome"},{"AppName":"m-ui ADB Keeper","PackageName":"io.github.ylsislove.mui.adbkeeper"}]}}'
         ;;
     *startapp*)
         printf '%s\n' "$*" >> "$MUI_TEST_LAUNCHES"
@@ -80,8 +86,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$expression" in
-    '@.data.AppInfo[*].AppName') printf '云视听小电视\n桌面\n' ;;
-    '@.data.AppInfo[*].PackageName') printf 'com.xiaodianshi.tv.yst\ncom.mitv.tvhome\n' ;;
+    '@.data.AppInfo[*].AppName') printf '云视听小电视\n桌面\nm-ui ADB Keeper\n' ;;
+    '@.data.AppInfo[*].PackageName') printf 'com.xiaodianshi.tv.yst\ncom.mitv.tvhome\nio.github.ylsislove.mui.adbkeeper\n' ;;
     '@.status') printf '0\n' ;;
     *) exit 1 ;;
 esac
@@ -124,6 +130,9 @@ export MUI_JSONFILTER_BIN="$TEST_ROOT/bin/jsonfilter"
 export MUI_TEST_ENABLED="$TEST_ROOT/enabled"
 export MUI_TEST_STATE_COUNT="$TEST_ROOT/state-count"
 export MUI_TEST_LAUNCHES="$TEST_ROOT/launches"
+export MUI_TEST_ADB_FAILURES="$TEST_ROOT/adb-failures"
+export MUI_ADB_RECOVERY_DELAY=0
+export MUI_ADB_RECOVERY_INTERVAL=1
 
 assert_contains() {
     haystack="$1"
@@ -204,6 +213,7 @@ status_output=$("$PROJECT_DIR/m-ui" status)
 assert_contains "$status_output" 'm-ui 状态：已运行'
 "$PROJECT_DIR/m-ui" stop >/dev/null
 
+printf '1\n' > "$MUI_TEST_ADB_FAILURES"
 "$PROJECT_DIR/m-ui" daemon &
 daemon_pid=$!
 sleep 4
@@ -221,14 +231,22 @@ wait "$daemon_pid" 2>/dev/null || true
     exit 1
 }
 
-launch_count=$(wc -l < "$MUI_TEST_LAUNCHES")
-[ "$launch_count" -eq 1 ] || {
-    printf '断言失败：应用启动了 %s 次，预期 1 次。\n' "$launch_count" >&2
+keeper_launch_count=$(grep -c 'io.github.ylsislove.mui.adbkeeper' "$MUI_TEST_LAUNCHES")
+[ "$keeper_launch_count" -eq 1 ] || {
+    printf '断言失败：ADB Keeper 启动了 %s 次，预期 1 次。\n' "$keeper_launch_count" >&2
+    exit 1
+}
+
+app_launch_count=$(grep -c 'com.xiaodianshi.tv.yst' "$MUI_TEST_LAUNCHES")
+[ "$app_launch_count" -eq 1 ] || {
+    printf '断言失败：自启动应用启动了 %s 次，预期 1 次。\n' "$app_launch_count" >&2
     exit 1
 }
 
 assert_contains "$(cat "$MUI_LOG_FILE")" '检测到电视由息屏进入亮屏'
 assert_contains "$(cat "$MUI_LOG_FILE")" '已启动电视应用'
+assert_contains "$(cat "$MUI_LOG_FILE")" '已请求 ADB Keeper 自动恢复'
+assert_contains "$(cat "$MUI_LOG_FILE")" 'ADB Keeper 已恢复电视 ADB'
 assert_contains "$(cat "$MUI_LOG_FILE")" '电视 ADB 地址已更新：192.168.1.123:5555 -> 192.168.1.124:5555'
 
 printf 'm-ui 本机模拟测试全部通过。\n'

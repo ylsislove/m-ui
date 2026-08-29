@@ -84,7 +84,23 @@ m-ui
 
 ADB 私钥会自动生成在 `/etc/m-ui/adbkey`，权限为 `600`。不要把它提交到 Git 仓库或发给他人。
 
-## 5. 选择应用并启用服务
+## 5. 可选：安装 ADB Keeper
+
+如果电视彻底断电后会自动关闭 ADB，可在电脑上用官方 Android Platform Tools 执行：
+
+```sh
+adb connect 192.168.1.100:5555
+adb install -r dist/m-ui-adb-keeper.apk
+adb shell pm grant io.github.ylsislove.mui.adbkeeper android.permission.WRITE_SECURE_SETTINGS
+```
+
+将 IP 换成电视实际地址。第一次连接时需要在电视上确认这台电脑的 ADB 授权。
+
+Keeper 不申请联网权限、不常驻、不显示界面。m-ui 仅在确认 Keeper 已安装、电视 `6095` 在线但 ADB 不可用时唤起它。Keeper 写入 Android 标准的 `development_settings_enabled` 和 `adb_enabled`，然后立即退出。
+
+可以做一次彻底断电验证。成功时，`m-ui logs` 会依次出现“已请求 ADB Keeper 自动恢复”和“ADB Keeper 已恢复电视 ADB”。
+
+## 6. 选择应用并启用服务
 
 再次运行 `m-ui`：
 
@@ -97,7 +113,7 @@ ADB 私钥会自动生成在 `/etc/m-ui/adbkey`，权限为 `600`。不要把它
 
 最后选择 `8` 检查状态，并实际让电视息屏再亮屏测试一次。
 
-## 6. 升级
+## 7. 升级
 
 上传新版本文件并再次运行安装脚本即可。已有配置、应用选择和 ADB 授权都会保留：
 
@@ -107,3 +123,9 @@ sh install-router.sh
 ```
 
 如果电视 IP 发生变化，运行 `m-ui` 后选择 `1. 设置电视 IP 地址` 即可。后台服务会在下一轮检测时自动改用新地址，无需重启。安装时传入的 `TV_IP` 环境变量只在第一次创建配置时生效。
+
+路由器上的 `uninstall-router.sh` 不会删除电视上的 Keeper。如果不再使用，请在 ADB 可用时另行执行：
+
+```sh
+adb uninstall io.github.ylsislove.mui.adbkeeper
+```

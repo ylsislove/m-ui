@@ -2,6 +2,19 @@
 
 本项目遵循语义化版本号。
 
+## [1.3.0] - 2026-08-29
+
+### 新增
+
+- 增加无界面的 m-ui ADB Keeper，用于处理部分小米电视彻底断电后自动关闭 ADB 的问题。
+- 电视 `6095` 在线但 ADB 不可用时，后台自动唤起 Keeper 并验证 ADB 恢复。
+- ADB 恢复时如电视已亮屏，将该事件视为一次冷启动，按用户设置的延迟启动第三方应用。
+- 启动恢复前先确认 Keeper 已安装，未安装时保持原有断线重试行为。
+
+### 验证
+
+- 已在 MiTV-MTSU0、Android 14、OS 3.0.119.0 上验证通过：主动关闭 `adb_enabled` 后，仅通过 `6095` 唤起 Keeper 即可恢复 TCP `5555`。
+
 ## [1.2.0] - 2026-08-29
 
 ### 新增
@@ -34,3 +47,4 @@
 
 [1.1.1]: https://github.com/ylsislove/m-ui/releases/tag/v1.1.1
 [1.2.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.2.0
+[1.3.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.0

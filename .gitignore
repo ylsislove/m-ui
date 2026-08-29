@@ -17,3 +17,9 @@ m-ui-router-deploy.pub
 coverage.out
 dist/*
 !dist/m-adb-linux-armv7
+!dist/m-ui-adb-keeper.apk
+
+# Android ADB Keeper build products and signing identity.
+android/adb-keeper/build/
+android/adb-keeper/dist/
+android/adb-keeper/.keystore/
