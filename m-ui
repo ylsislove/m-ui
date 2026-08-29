@@ -2,7 +2,7 @@
 
 # m-ui - Xiaomi TV auto-launch manager for OpenWrt/PandoraBox.
 
-VERSION="1.3.1"
+VERSION="1.3.2"
 
 MUI_CONFIG_DIR="${MUI_CONFIG_DIR:-/etc/m-ui}"
 MUI_CONFIG_FILE="${MUI_CONFIG_FILE:-$MUI_CONFIG_DIR/config}"
@@ -19,6 +19,7 @@ MUI_ADB_RECOVERY_VERIFY_SECONDS="${MUI_ADB_RECOVERY_VERIFY_SECONDS:-10}"
 MUI_ADB_RECOVERY_RETRY_DELAY="${MUI_ADB_RECOVERY_RETRY_DELAY:-5}"
 MUI_ADB_RECOVERY_MAX_ATTEMPTS="${MUI_ADB_RECOVERY_MAX_ATTEMPTS:-3}"
 MUI_ADB_PAUSED_POLL_INTERVAL="${MUI_ADB_PAUSED_POLL_INTERVAL:-30}"
+MUI_COLD_BOOT_STABLE_SECONDS="${MUI_COLD_BOOT_STABLE_SECONDS:-10}"
 
 DEFAULT_TV_IP="192.168.1.100"
 DEFAULT_TV_ADB_PORT="5555"
@@ -593,6 +594,7 @@ daemon_cleanup() {
 run_daemon() {
     local address previous_address previous_state current_state confirm_state poll_interval launch_delay connection_logged
     local http_state recovery_paused last_slow_adb_check now check_adb paused_poll_interval
+    local cold_boot_pending cold_boot_ready_since cold_boot_stable_seconds
 
     ensure_config || exit 1
     require_command "$MUI_ADB_BIN" || {
@@ -618,6 +620,8 @@ run_daemon() {
     http_state="unknown"
     recovery_paused=""
     last_slow_adb_check=0
+    cold_boot_pending=""
+    cold_boot_ready_since=0
     log_message "m-ui ${VERSION} 监控服务已启动。"
 
     while :; do
@@ -629,6 +633,8 @@ run_daemon() {
             http_state="unknown"
             recovery_paused=""
             last_slow_adb_check=0
+            cold_boot_pending=""
+            cold_boot_ready_since=0
         fi
         previous_address="$address"
         poll_interval=$(config_get POLL_INTERVAL)
@@ -637,6 +643,8 @@ run_daemon() {
         valid_launch_delay "$launch_delay" || launch_delay="$DEFAULT_LAUNCH_DELAY"
         paused_poll_interval="$MUI_ADB_PAUSED_POLL_INTERVAL"
         valid_positive_number "$paused_poll_interval" || paused_poll_interval=30
+        cold_boot_stable_seconds="$MUI_COLD_BOOT_STABLE_SECONDS"
+        valid_positive_number "$cold_boot_stable_seconds" || cold_boot_stable_seconds=10
 
         now=$(date +%s)
         check_adb="yes"
@@ -659,7 +667,37 @@ run_daemon() {
                 log_message "电视 ADB 已连接：${address}"
                 connection_logged="ready"
             fi
-            if [ "$http_state" = "offline" ]; then
+            if [ "$cold_boot_pending" = "yes" ]; then
+                if tv_http_is_alive; then
+                    if [ "$http_state" != "online" ]; then
+                        http_state="online"
+                        recovery_paused=""
+                        last_slow_adb_check=0
+                        log_message "电视 6095 接口已上线，正在等待冷启动状态稳定。"
+                    fi
+                    if [ "$cold_boot_ready_since" -eq 0 ]; then
+                        cold_boot_ready_since="$now"
+                    elif [ $((now - cold_boot_ready_since)) -ge "$cold_boot_stable_seconds" ]; then
+                        cold_boot_pending=""
+                        cold_boot_ready_since=0
+                        previous_state="$current_state"
+                        if [ "$current_state" = "ON" ]; then
+                            log_message "检测到电视冷启动后已稳定亮屏，${launch_delay} 秒后启动应用。"
+                            sleep "$launch_delay"
+                            confirm_state=$(read_screen_state "$address")
+                            if [ "$confirm_state" = "ON" ]; then
+                                launch_selected_app
+                            else
+                                log_message '等待期间电视再次息屏，已取消启动应用。'
+                            fi
+                        fi
+                        sleep "$poll_interval"
+                        continue
+                    fi
+                else
+                    cold_boot_ready_since=0
+                fi
+            elif [ "$http_state" = "offline" ]; then
                 http_state="unknown"
                 last_slow_adb_check=0
             fi
@@ -670,6 +708,8 @@ run_daemon() {
             elif [ "$previous_state" = "OFF" ] && [ "$current_state" = "ON" ]; then
                 log_message "检测到电视由息屏进入亮屏，${launch_delay} 秒后启动应用。"
                 previous_state="$current_state"
+                cold_boot_pending=""
+                cold_boot_ready_since=0
                 sleep "$launch_delay"
                 confirm_state=$(read_screen_state "$address")
                 if [ "$confirm_state" = "ON" ]; then
@@ -689,6 +729,7 @@ run_daemon() {
             log_message "无法连接电视 ADB（${address}），正在等待电视上线或 ADB Keeper 恢复。"
             connection_logged="failed"
         fi
+        cold_boot_ready_since=0
 
         if tv_http_is_alive; then
             if [ "$http_state" != "online" ]; then
@@ -704,9 +745,15 @@ run_daemon() {
                     connection_logged="ready"
                     log_message "电视 ADB 已连接：${address}"
                     log_message "ADB Keeper 已恢复电视 ADB：${address}"
-                    if [ "$current_state" = "ON" ] && [ "$previous_state" != "ON" ]; then
+                    if [ "$current_state" = "ON" ] && { [ "$previous_state" != "ON" ] || [ "$cold_boot_pending" = "yes" ]; }; then
                         previous_state="$current_state"
-                        log_message "检测到 ADB 恢复时电视已亮屏，${launch_delay} 秒后启动应用。"
+                        if [ "$cold_boot_pending" = "yes" ]; then
+                            log_message "检测到冷启动会话中 ADB 已恢复且电视已亮屏，${launch_delay} 秒后启动应用。"
+                        else
+                            log_message "检测到 ADB 恢复时电视已亮屏，${launch_delay} 秒后启动应用。"
+                        fi
+                        cold_boot_pending=""
+                        cold_boot_ready_since=0
                         sleep "$launch_delay"
                         confirm_state=$(read_screen_state "$address")
                         if [ "$confirm_state" = "ON" ]; then
@@ -716,6 +763,8 @@ run_daemon() {
                         fi
                     else
                         previous_state="$current_state"
+                        cold_boot_pending=""
+                        cold_boot_ready_since=0
                     fi
                     sleep "$poll_interval"
                     continue
@@ -724,17 +773,23 @@ run_daemon() {
                 case "$RECOVERY_RESULT" in
                     unavailable)
                         recovery_paused="yes"
+                        cold_boot_pending=""
+                        cold_boot_ready_since=0
                         last_slow_adb_check=$(date +%s)
                         log_message "未检测到 ADB Keeper，已暂停本次电视在线会话的自恢复。"
                         ;;
                     paused)
                         recovery_paused="yes"
+                        cold_boot_pending=""
+                        cold_boot_ready_since=0
                         last_slow_adb_check=$(date +%s)
                         ;;
                     offline)
                         http_state="offline"
                         recovery_paused=""
                         previous_state=""
+                        cold_boot_pending="yes"
+                        cold_boot_ready_since=0
                         last_slow_adb_check=$(date +%s)
                         log_message "电视 6095 接口已离线，ADB 自恢复会话已重置。"
                         ;;
@@ -748,6 +803,8 @@ run_daemon() {
                 http_state="offline"
                 recovery_paused=""
                 previous_state=""
+                cold_boot_pending="yes"
+                cold_boot_ready_since=0
                 last_slow_adb_check="$now"
             fi
         fi

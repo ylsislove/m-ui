@@ -2,6 +2,20 @@
 
 本项目遵循语义化版本号。
 
+## [1.3.2] - 2026-08-29
+
+### 修复
+
+- 修复部分小米电视冷启动时 ADB 先短暂可用、随后被系统关闭，导致 Keeper 恢复后不启动用户应用的问题。
+- 将“已确认电视离线”保存为独立冷启动会话，开机早期的短暂 ADB 连接不再清除该状态。
+- 冷启动后如 ADB 与 `6095` 持续稳定，等待 10 秒后直接启动用户应用，无需先经历 Keeper 恢复。
+- 保留普通 ADB 抖动时不重复启动应用的保护。
+
+### 测试
+
+- 增加“离线 → ADB 短暂恢复 → ADB 再次关闭 → Keeper 恢复”真实时序的回归测试。
+- 增加普通 ADB 抖动不误启动、冷启动后 ADB 持续稳定的回归测试。
+
 ## [1.3.1] - 2026-08-29
 
 ### 改进
@@ -63,3 +77,4 @@
 [1.2.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.2.0
 [1.3.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.0
 [1.3.1]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.1
+[1.3.2]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.2
