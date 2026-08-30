@@ -10,7 +10,9 @@ import android.util.Log;
 
 public final class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "MuiAdbKeeper";
-    private static final long[] RETRY_DELAYS_MS = {10_000L, 30_000L, 90_000L};
+    private static final long[] RETRY_DELAYS_MS = {
+            5_000L, 10_000L, 15_000L, 30_000L, 60_000L, 90_000L
+    };
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -35,7 +37,7 @@ public final class BootReceiver extends BroadcastReceiver {
                     retryIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    AlarmManager.ELAPSED_REALTIME,
                     SystemClock.elapsedRealtime() + RETRY_DELAYS_MS[index],
                     pendingIntent);
         }

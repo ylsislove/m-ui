@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	programVersion = "1.1.0"
+	programVersion = "1.2.1"
 	adbVersion     = 0x01000000
 	adbMaxPayload  = 4096
 	maxReadPayload = 1024 * 1024
@@ -350,20 +350,86 @@ func parseWakefulness(output string) string {
 	return ""
 }
 
+const bootReasonMarker = "__M_UI_BOOT_REASON__"
+
+func parseBootReason(output string) string {
+	lines := strings.Split(output, "\n")
+	for index, line := range lines {
+		if strings.TrimSpace(line) != bootReasonMarker {
+			continue
+		}
+		for _, candidate := range lines[index+1:] {
+			if reason := strings.TrimSpace(candidate); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
+func parsePowerTime(output, field string) (uint64, bool) {
+	prefix := field + "="
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		var value uint64
+		if _, err := fmt.Sscanf(line, prefix+"%d", &value); err == nil {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func isQuietBootBeforeFirstWake(powerOutput string) bool {
+	reason := strings.ToLower(parseBootReason(powerOutput))
+	if !strings.Contains(reason, "reboot,quiet") {
+		return false
+	}
+	lastWakeTime, hasLastWakeTime := parsePowerTime(powerOutput, "mLastWakeTime")
+	lastSleepTime, hasLastSleepTime := parsePowerTime(powerOutput, "mLastSleepTime")
+	return hasLastWakeTime && hasLastSleepTime && lastWakeTime == 0 && lastSleepTime == 0
+}
+
+func resolveScreenState(displayState, wakefulnessState string) string {
+	if displayState == "OFF" || wakefulnessState == "OFF" {
+		return "OFF"
+	}
+	if displayState == "ON" && wakefulnessState == "ON" {
+		return "ON"
+	}
+	if displayState == "" {
+		return wakefulnessState
+	}
+	if wakefulnessState == "" {
+		return displayState
+	}
+	return ""
+}
+
+func resolveObservedScreenState(displayOutput, powerOutput string) string {
+	state := resolveScreenState(
+		parseScreenState(displayOutput),
+		parseWakefulness(powerOutput),
+	)
+	if state == "ON" && isQuietBootBeforeFirstWake(powerOutput) {
+		return "OFF"
+	}
+	return state
+}
+
 func readScreenState(conn *adbConn) (string, error) {
 	var display bytes.Buffer
 	if err := runShell(conn, 1, "dumpsys display", &display); err != nil {
 		return "", err
 	}
-	if state := parseScreenState(display.String()); state != "" {
-		return state, nil
-	}
 
 	var power bytes.Buffer
-	if err := runShell(conn, 2, "dumpsys power", &power); err != nil {
+	if err := runShell(conn, 2, "dumpsys power; echo "+bootReasonMarker+"; getprop sys.boot.reason", &power); err != nil {
 		return "", err
 	}
-	if state := parseWakefulness(power.String()); state != "" {
+	if state := resolveObservedScreenState(display.String(), power.String()); state != "" {
 		return state, nil
 	}
 	return "", errors.New("未在电视系统信息中找到屏幕状态")

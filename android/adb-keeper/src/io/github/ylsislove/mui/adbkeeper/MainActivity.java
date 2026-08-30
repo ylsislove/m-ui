@@ -8,6 +8,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Keeper.enableAdb(this, "activity");
+        BootReceiver.scheduleRetries(this);
         finish();
     }
 }

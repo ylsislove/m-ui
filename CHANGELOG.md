@@ -2,6 +2,31 @@
 
 本项目遵循语义化版本号。
 
+## [1.3.3] - 2026-08-30
+
+### 修复
+
+- 修复电视静默重启时 Android 逻辑显示状态与物理面板不一致，导致黑屏后台启动用户应用并播放声音的问题：任一明确休眠状态仍优先判为 `OFF`；对于 `reboot,quiet` 后 `Awake + ON`、但 `mLastWakeTime/mLastSleepTime` 仍为 `0/0` 的情况，也会等待真正的遥控唤醒记录后才判为亮屏。
+- 移除短暂离线时通过 `6095 startapp` 启动 ADB Keeper 的旧路径，避免系统静默重启时意外点亮电视；仅保留长时间完整离线后的单次兜底。
+- m-ui 在 ADB 可用时无界面启用 Keeper；冷启动前 120 秒保持快速探测，以捕获小米电视开机早期短暂开放 ADB 的窗口。
+- Keeper 改用 5、10、15、30、60、90 秒的非唤醒重试，即使系统延迟关闭 ADB 也能在后台重新写回设置。
+- 冷启动快速阶段改为每 1 秒开始一轮尝试，并先启动 Keeper、再读取完整屏幕状态，减少短暂 ADB 窗口被错过的概率。
+- 每次冷启动会话最多成功布置一轮 Keeper 重试，90 秒后自然结束，不再由 m-ui 周期续期。
+- 增加彻底断电兜底：电视 `6095` 连续离线至少 120 秒后重新上线、ADB 仍不可用时，仅通过 `6095` 单次启动 Keeper；短暂静默重启和普通 ADB 抖动不会触发。
+
+### 迁移
+
+- Keeper 继续使用包名 `io.github.ylsislove.mui.adbkeeper`。
+- 由于早期发布版签名密码丢失，已安装旧版 Keeper 的用户需要卸载后重新安装一次；新签名及固定密码已保存于 Git 忽略的持久目录，后续版本可继续覆盖升级。
+
+### 验证
+
+- 增加静默重启假 `ON`、ADB 短暂窗口、普通 ADB 抖动，以及仅长时间完整离线允许一次 `6095` Keeper 兜底的回归测试。
+- 已在息屏电视上验证新版 Keeper 启动前后 `mWakefulness` 与 `mLastWakeTime` 不变，重试均为非唤醒 `ELAPSED` 类型。
+- 已做单变量实机验证：即使 Keeper Activity 使用 `Theme.NoDisplay`，通过电视 `6095 startapp` 启动它仍会立即把 `mWakefulness` 从 `Asleep` 改为 `Awake` 并刷新 `mLastWakeTime`，因此自动恢复明确禁用该路径。
+- 已连续两次在息屏状态执行诊断命令 `adb shell reboot quiet`：系统会报告 `Awake + ON` 且唤醒/休眠时间为 `0/0`，新版不会启动用户应用。该命令在实测机型上可能造成低背光近黑、桌面仍渲染/出声、遥控器电源键暂时失效的异常中间态，不能视为电视自身静默重启的等价模拟；m-ui 正式逻辑不会执行该命令。
+- ADB Keeper `1.4.0` 已使用固定保存的新签名完成同签名覆盖升级，`WRITE_SECURE_SETTINGS` 权限得到保留。
+
 ## [1.3.2] - 2026-08-29
 
 ### 修复
@@ -78,3 +103,4 @@
 [1.3.0]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.0
 [1.3.1]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.1
 [1.3.2]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.2
+[1.3.3]: https://github.com/ylsislove/m-ui/releases/tag/v1.3.3

@@ -96,9 +96,19 @@ adb shell pm grant io.github.ylsislove.mui.adbkeeper android.permission.WRITE_SE
 
 将 IP 换成电视实际地址。第一次连接时需要在电视上确认这台电脑的 ADB 授权。
 
-Keeper 不申请联网权限、不常驻、不显示界面。m-ui 仅在确认 Keeper 已安装、电视 `6095` 在线但 ADB 不可用时唤起它。Keeper 写入 Android 标准的 `development_settings_enabled` 和 `adb_enabled`，然后立即退出。默认单次最多验证 10 秒，间隔 5 秒，每次电视在线会话最多尝试 3 次。
+如果从 `v1.3.2` 或更早版本升级时出现 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，是因为早期发布版的签名密码已经丢失，无法继续使用原签名覆盖安装。只需执行一次干净迁移：
 
-可以做一次彻底断电验证。成功时，`m-ui logs` 会依次出现“已请求 ADB Keeper 自动恢复”和“ADB Keeper 已恢复电视 ADB”。
+```sh
+adb uninstall io.github.ylsislove.mui.adbkeeper
+adb install dist/m-ui-adb-keeper.apk
+adb shell pm grant io.github.ylsislove.mui.adbkeeper android.permission.WRITE_SECURE_SETTINGS
+```
+
+这只会重装无用户数据的 Keeper，不会影响路由器上的 m-ui 配置。`v1.3.3` 之后的 APK 使用固定保存的新签名，可继续通过 `adb install -r` 正常升级。
+
+Keeper 不申请联网权限、不常驻、不显示界面。ADB 可用时，m-ui 会通过 ADB 启动一次 Keeper 的 `NoDisplay` 活动；Keeper 写入 Android 标准的 `development_settings_enabled` 和 `adb_enabled`，安排 5、10、15、30、60、90 秒的非唤醒重试，然后立即退出。开机广播是辅助路径，主恢复路径利用部分小米电视开机早期短暂开放 ADB 的窗口。
+
+短暂离线时 `6095` 不会启动 Keeper；只有电视连续离线至少 120 秒后重新上线、ADB 仍不可用时，才会单次用于彻底断电兜底。可以做一次彻底断电验证；成功时，`m-ui logs` 会出现“已在冷启动 ADB 窗口中优先启用 Keeper 无界面后台恢复”“ADB Keeper 有限后台恢复已准备”或“已通过 6095 单次唤起 Keeper 兜底恢复”，并最终在确认真实亮屏后启动用户应用。
 
 ## 6. 选择应用并启用服务
 

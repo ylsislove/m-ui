@@ -19,8 +19,8 @@ BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 RELEASE_DIST_DIR="$PROJECT_DIR/../../dist"
 KEYSTORE_DIR="$PROJECT_DIR/.keystore"
-KEYSTORE="$KEYSTORE_DIR/adb-keeper.jks"
-KEYSTORE_PASSWORD_FILE="$KEYSTORE_DIR/password"
+KEYSTORE="$KEYSTORE_DIR/adb-keeper-v2.jks"
+KEYSTORE_PASSWORD_FILE="$KEYSTORE_DIR/password-v2"
 KEYSTORE_PASSWORD="${ADB_KEEPER_KEYSTORE_PASSWORD:-}"
 
 for required_file in \
@@ -83,8 +83,8 @@ jar cf "$BUILD_DIR/classes.jar" -C "$BUILD_DIR/classes" .
     --manifest "$PROJECT_DIR/AndroidManifest.xml" \
     --min-sdk-version 24 \
     --target-sdk-version 28 \
-    --version-code 3 \
-    --version-name 1.2.0
+    --version-code 5 \
+    --version-name 1.4.0
 
 zip -q -j "$BUILD_DIR/unsigned.apk" "$BUILD_DIR/dex/classes.dex"
 "$BUILD_TOOLS/zipalign" -f 4 "$BUILD_DIR/unsigned.apk" "$BUILD_DIR/aligned.apk"
